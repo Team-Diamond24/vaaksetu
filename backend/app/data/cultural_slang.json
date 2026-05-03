@@ -1,0 +1,194 @@
+[
+  {
+    "term": "ಉಸಿರಾಡಕ್ಕಾಗವಲ್ದು",
+    "canonical": "ಉಸಿರಾಡಲು ಆಗುತ್ತಿಲ್ಲ",
+    "definition": "Cannot breathe — severe respiratory distress. North Karnataka dialect omits the standard auxiliary verb form.",
+    "region": "North Karnataka",
+    "domain": "medical",
+    "urgency_hint": 5
+  },
+  {
+    "term": "ರೊಕ್ಕ",
+    "canonical": "ಹಣ / ದುಡ್ಡು",
+    "definition": "Money — in crime contexts may indicate robbery or extortion.",
+    "region": "North Karnataka",
+    "domain": "crime",
+    "urgency_hint": null
+  },
+  {
+    "term": "ಹೊಟ್ಟಿ ಬಾಕ ಬಂದೈತಿ",
+    "canonical": "ಹೊಟ್ಟೆ ತುಂಬಾ ನೋಯುತ್ತಿದೆ",
+    "definition": "Severe stomach pain — 'baak' is a North Karnataka intensifier implying acute distress, not mild discomfort.",
+    "region": "North Karnataka",
+    "domain": "medical",
+    "urgency_hint": 3
+  },
+  {
+    "term": "ರಗಡ",
+    "canonical": "ಜಗಳ / ಹೊಡೆದಾಟ",
+    "definition": "A violent fight or brawl — implies active physical altercation.",
+    "region": "North Karnataka",
+    "domain": "crime",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ಬೆಂಕಿ ಹಚ್ಚಾರ",
+    "canonical": "ಬೆಂಕಿ ಹಚ್ಚಿದ್ದಾರೆ",
+    "definition": "Someone set fire — implies deliberate arson, North Karnataka past-tense marker '-aar'.",
+    "region": "North Karnataka",
+    "domain": "fire",
+    "urgency_hint": 5
+  },
+  {
+    "term": "ಹಿಡ್ಕೊಂಡ್ ಹೋಗ್ಯಾರ",
+    "canonical": "ಹಿಡಿದುಕೊಂಡು ಹೋಗಿದ್ದಾರೆ",
+    "definition": "They have taken someone away (abduction/kidnapping). Contracted verb form typical of Dharwad-Belgaum belt.",
+    "region": "North Karnataka",
+    "domain": "crime",
+    "urgency_hint": 5
+  },
+  {
+    "term": "ಗಾಡಿ ಬಿದ್ದೈತಿ",
+    "canonical": "ವಾಹನ ಅಪಘಾತವಾಗಿದೆ",
+    "definition": "Vehicle has crashed / accident. 'Gaadi biddaiti' is North Karnataka dialect for a road accident.",
+    "region": "North Karnataka",
+    "domain": "medical",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ಉಸ್ರು ಬರ್ತಿಲ್ಲ",
+    "canonical": "ಉಸಿರು ಬರುತ್ತಿಲ್ಲ",
+    "definition": "Cannot breathe — Old Mysore dialect. Vowel shift from 'usiru' to 'usru', 'bartilla' negative form.",
+    "region": "Old Mysore",
+    "domain": "medical",
+    "urgency_hint": 5
+  },
+  {
+    "term": "ಎದಿ ನೋವು",
+    "canonical": "ಎದೆ ನೋವು",
+    "definition": "Chest pain. 'Edi' is the Mysore-region pronunciation of 'ede' (chest).",
+    "region": "Old Mysore",
+    "domain": "medical",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ಹೊಡ್ತಾ ಇದಾರೆ",
+    "canonical": "ಹೊಡೆಯುತ್ತಿದ್ದಾರೆ",
+    "definition": "They are beating (someone) — ongoing physical assault.",
+    "region": "Old Mysore",
+    "domain": "crime",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ಕಳ್ಳ ಬಂದವ್ನೆ",
+    "canonical": "ಕಳ್ಳ ಬಂದಿದ್ದಾನೆ",
+    "definition": "A thief has come / intruder present — active burglary in progress.",
+    "region": "Old Mysore",
+    "domain": "crime",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ತಲಿ ತಿರ್ಗತೈತೆ",
+    "canonical": "ತಲೆ ತಿರುಗುತ್ತಿದೆ",
+    "definition": "Severe dizziness / vertigo — may indicate stroke, low BP, or head injury. Mysore pronunciation of 'tale'→'tali'.",
+    "region": "Old Mysore",
+    "domain": "medical",
+    "urgency_hint": 3
+  },
+  {
+    "term": "ಜ್ವರ ಬೈಂದು",
+    "canonical": "ಜ್ವರ ಬಂದಿದೆ",
+    "definition": "Has fever. Coastal dialect uses 'baindu' (Tulu-influenced past tense).",
+    "region": "Coastal Karnataka",
+    "domain": "medical",
+    "urgency_hint": 2
+  },
+  {
+    "term": "ನೀರ್ ಬಂದ್ಹೋಯ್ದು",
+    "canonical": "ನೀರು ಬಂದು ಹೋಗಿದೆ",
+    "definition": "Flooding — water has come in. Coastal contraction 'bandhoydu' implies sudden flooding.",
+    "region": "Coastal Karnataka",
+    "domain": "fire",
+    "urgency_hint": 4
+  },
+  {
+    "term": "ಖೂನ ಆಗೈತಿ",
+    "canonical": "ಕೊಲೆ ಆಗಿದೆ",
+    "definition": "A murder has happened. 'Khoona' is the Urdu-influenced Hyderabad-Karnataka term for murder/homicide.",
+    "region": "Hyderabad-Karnataka",
+    "domain": "crime",
+    "urgency_hint": 5
+  },
+  {
+    "term": "ದವಾಖಾನಿ",
+    "canonical": "ಆಸ್ಪತ್ರೆ",
+    "definition": "Hospital — Urdu-influenced word 'dawakhani' used across Hyderabad-Karnataka instead of standard 'aaspatre'.",
+    "region": "Hyderabad-Karnataka",
+    "domain": "medical",
+    "urgency_hint": null
+  },
+  {
+    "term": "ಹೊಡ್ದಾರ ಸಾಹೇಬ",
+    "canonical": "ಹೊಡೆದಿದ್ದಾರೆ ಸರ್",
+    "definition": "Someone has been beaten — 'Saheb' is the honorific for authority figures in Hyderabad-Karnataka dialect.",
+    "region": "Hyderabad-Karnataka",
+    "domain": "crime",
+    "urgency_hint": 3
+  },
+  {
+    "term": "सांस नहीं आ रही",
+    "canonical": "सांस लेने में कठिनाई",
+    "definition": "Cannot breathe — Hindi. Critical respiratory distress.",
+    "region": "Hindi-speaking",
+    "domain": "medical",
+    "urgency_hint": 5
+  },
+  {
+    "term": "मार रहे हैं",
+    "canonical": "मारपीट हो रही है",
+    "definition": "They are beating (someone) — active assault in Hindi.",
+    "region": "Hindi-speaking",
+    "domain": "crime",
+    "urgency_hint": 4
+  },
+  {
+    "term": "आग लगी है",
+    "canonical": "अग्निकांड",
+    "definition": "Fire has started — active fire in Hindi.",
+    "region": "Hindi-speaking",
+    "domain": "fire",
+    "urgency_hint": 5
+  },
+  {
+    "term": "चोर आया है",
+    "canonical": "चोरी हो रही है",
+    "definition": "A thief has come — active burglary/intrusion.",
+    "region": "Hindi-speaking",
+    "domain": "crime",
+    "urgency_hint": 4
+  },
+  {
+    "term": "gas leak",
+    "canonical": "LPG / gas cylinder leakage",
+    "definition": "Domestic gas leak — fire & explosion risk.",
+    "region": "English-speaking",
+    "domain": "fire",
+    "urgency_hint": 5
+  },
+  {
+    "term": "chain snatching",
+    "canonical": "robbery / theft of jewellery",
+    "definition": "Street robbery targeting necklaces/chains — common urban crime term.",
+    "region": "English-speaking",
+    "domain": "crime",
+    "urgency_hint": 3
+  },
+  {
+    "term": "eve teasing",
+    "canonical": "sexual harassment",
+    "definition": "South Asian colloquial term for sexual harassment in public spaces.",
+    "region": "English-speaking",
+    "domain": "crime",
+    "urgency_hint": 3
+  }
+]

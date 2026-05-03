@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.services.cultural_service import cultural_context_service
 
 # ---------------------------------------------------------------------------
 # Output contract (Pydantic → Gemini JSON schema enforcement)
@@ -109,6 +110,15 @@ and produce a structured JSON analysis for the human operator.
 6. **Language detection** — output the ISO 639-1 code of the primary \
    language (en, hi, kn, etc.).
 
+## Linguistic Context
+If a "Linguistic Context" section is provided alongside the transcript, \
+it means regional dialect markers were detected. You MUST:
+- Use the provided definitions to correctly interpret ambiguous terms.
+- If an urgency hint is given, treat it as a MINIMUM for that term.
+- Mirror the caller's dialectal tone in your restatement — do NOT \
+  over-formalize into textbook Kannada or Hindi. Use the SAME regional \
+  phrasing the caller used, so they feel understood and trust the system.
+
 ## Rules
 - NEVER fabricate information not present in the transcript.
 - If the transcript is too short or unintelligible, set intent to "Inquiry", \
@@ -154,16 +164,27 @@ class ReasoningService:
         """
         Send the transcript to Gemini and return structured
         reasoning, or ``None`` if the call fails.
+
+        Before calling the LLM, the transcript is scanned by the
+        CulturalContextService for regional dialect markers.  If any
+        are found, the linguistic context is injected into the prompt
+        so the model can adjust its restatement and urgency assessment.
         """
         if not transcript or not transcript.strip():
             return None
+
+        # --- Cultural context injection ---
+        cultural_ctx = cultural_context_service.get_context(transcript)
+        user_content = f"Caller transcript:\n\n{transcript}"
+        if cultural_ctx.context_string:
+            user_content += f"\n\n{cultural_ctx.context_string}"
 
         try:
             response = await self._client.beta.chat.completions.parse(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Caller transcript:\n\n{transcript}"}
+                    {"role": "user", "content": user_content}
                 ],
                 response_format=ReasoningOutput,
                 temperature=0.2,
