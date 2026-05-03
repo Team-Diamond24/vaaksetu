@@ -73,22 +73,20 @@ The goal is simple: **understand correctly, verify safely, respond faster.**
 ## System Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Citizen Voice] --> B[Frontend AudioWorklet]
     B --> C[WebSocket audio_chunk]
     C --> D[Groq STT + VAD]
-    C --> E[Acoustic Intelligence]
-    D --> F[Transcript Emission to UI]
-    D --> G[Cultural Context Detection]
-    G --> H[Gemini Reasoning]
-    E --> I[Distress/Environment Updates]
-    H --> J[Verification Loop]
-    J --> K[Edge-TTS Streaming]
-    K --> A
-    J --> L[Human Takeover]
-    D --> M[SQLite transcript_events]
-    M --> N[Post-Call Analytics (Gemini)]
-    N --> O[Supervisor Call Summary Modal]
+    D --> E[Acoustic & Cultural Analysis]
+    E --> F[Gemini Reasoning]
+    F --> G{Verification Needed?}
+    G -- Yes --> H[AI Restatement/TTS]
+    G -- No --> I[Direct Action/Human Takeover]
+    H --> J[Citizen Response]
+    J --> G
+    I --> K[Supervisor Dashboard]
+    K --> L[Post-Call Analytics]
+    L --> M[SQLite Persistence]
 ```
 
 Text flow: **Citizen -> Groq STT -> Cultural + Acoustic Analysis -> Gemini Reasoning -> Verification -> Edge-TTS -> Citizen**, with resilience short-circuits and human takeover at any point.
