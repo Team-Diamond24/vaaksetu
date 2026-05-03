@@ -34,7 +34,7 @@ SAMPLES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_MS // 1000  # 4 000
 
 # Energy threshold — Int16 RMS below this is treated as silence.
 # Tuned for typical close-talk microphones; adjust if needed.
-ENERGY_THRESHOLD = 350
+ENERGY_THRESHOLD = settings.vad_energy_threshold
 
 # Groq Whisper prompt for multilingual code-switching
 WHISPER_PROMPT = (
@@ -119,6 +119,14 @@ class TranscriptionService:
     def end_session(self, session_id: str) -> None:
         """Remove a session buffer and free memory."""
         self._sessions.pop(session_id, None)
+
+    def clear_buffer(self, session_id: str) -> None:
+        """Clear accumulated audio to prevent processing old trailing noise."""
+        buf = self._sessions.get(session_id)
+        if buf:
+            buf.chunks.clear()
+            buf.silence_chunks = 0
+            buf.is_speaking = False
 
     # -- main entry point ----------------------------------------------------
 

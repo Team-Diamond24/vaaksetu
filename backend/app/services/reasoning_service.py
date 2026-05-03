@@ -13,8 +13,7 @@ Takes a raw transcript and returns structured analysis:
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 
 from app.config import settings
 
@@ -145,8 +144,11 @@ class ReasoningService:
     """
 
     def __init__(self) -> None:
-        self._client = genai.Client(api_key=settings.gemini_api_key)
-        self._model = "gemini-2.5-flash"
+        self._client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=settings.openrouter_api_key,
+        )
+        self._model = "google/gemini-2.5-flash"
 
     async def analyze(self, transcript: str) -> ReasoningOutput | None:
         """
@@ -157,20 +159,20 @@ class ReasoningService:
             return None
 
         try:
-            response = self._client.models.generate_content(
+            response = await self._client.beta.chat.completions.parse(
                 model=self._model,
-                contents=f"Caller transcript:\n\n{transcript}",
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    response_json_schema=ReasoningOutput.model_json_schema(),
-                    temperature=0.2,
-                ),
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Caller transcript:\n\n{transcript}"}
+                ],
+                response_format=ReasoningOutput,
+                temperature=0.2,
+                max_tokens=500,
             )
-            return ReasoningOutput.model_validate_json(response.text)
+            return response.choices[0].message.parsed
 
         except Exception as exc:
-            print(f"[ReasoningService] Gemini error: {exc}")
+            print(f"[ReasoningService] OpenRouter/OpenAI error: {exc}")
             return None
 
     async def check_confirmation(self, transcript: str) -> ConfirmationOutput | None:
@@ -182,17 +184,17 @@ class ReasoningService:
             return None
 
         try:
-            response = self._client.models.generate_content(
+            response = await self._client.beta.chat.completions.parse(
                 model=self._model,
-                contents=f"Caller's response:\n\n{transcript}",
-                config=types.GenerateContentConfig(
-                    system_instruction=CONFIRMATION_PROMPT,
-                    response_mime_type="application/json",
-                    response_json_schema=ConfirmationOutput.model_json_schema(),
-                    temperature=0.1,
-                ),
+                messages=[
+                    {"role": "system", "content": CONFIRMATION_PROMPT},
+                    {"role": "user", "content": f"Caller's response:\n\n{transcript}"}
+                ],
+                response_format=ConfirmationOutput,
+                temperature=0.1,
+                max_tokens=200,
             )
-            return ConfirmationOutput.model_validate_json(response.text)
+            return response.choices[0].message.parsed
 
         except Exception as exc:
             print(f"[ReasoningService] Confirmation check error: {exc}")

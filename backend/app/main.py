@@ -242,6 +242,7 @@ async def ws_call(websocket: WebSocket):
 
                             lang = confirmation.language_code or "en"
                             confirm_msg = CONFIRMED_MESSAGES.get(lang, CONFIRMED_MESSAGES["en"])
+                            transcription_service.clear_buffer(session_id)
                             await _stream_tts(websocket, confirm_msg, lang)
 
                         elif confirmation and confirmation.is_denial:
@@ -251,12 +252,14 @@ async def ws_call(websocket: WebSocket):
 
                             lang = confirmation.language_code or "en"
                             deny_msg = DENIED_MESSAGES.get(lang, DENIED_MESSAGES["en"])
+                            transcription_service.clear_buffer(session_id)
                             await _stream_tts(websocket, deny_msg, lang)
 
                         else:
                             # 🤷 Ambiguous — re-prompt for confirmation
                             session = call_service.get_session(session_id)
                             lang = session.last_language_code if session else "en"
+                            transcription_service.clear_buffer(session_id)
                             await _stream_tts(
                                 websocket,
                                 "Could you please say Yes or No to confirm?",
@@ -298,6 +301,7 @@ async def ws_call(websocket: WebSocket):
 
                             # TTS: speak the restatement
                             if reasoning.restatement:
+                                transcription_service.clear_buffer(session_id)
                                 await _stream_tts(
                                     websocket,
                                     reasoning.restatement,

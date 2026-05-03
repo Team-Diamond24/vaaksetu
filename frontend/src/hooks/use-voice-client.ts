@@ -237,7 +237,13 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     /* 1. Mic permission */
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch {
       setError("Microphone access denied");
       return;
