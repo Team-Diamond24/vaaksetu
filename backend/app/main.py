@@ -8,6 +8,7 @@ Run with:
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import re
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -126,6 +127,15 @@ FALLBACK_TECHNICAL_GLITCH_MESSAGE = (
     "I am experiencing a technical glitch, connecting you to an operator immediately."
 )
 API_GUARD_TIMEOUT_SECONDS = 4.0
+FILLER_WORDS = {
+    "okay", "ok", "hmm", "huh", "ji", "sari", "haan", "ha", "hmmm",
+    "umm", "uh", "huhh", "achha", "acha", "hello", "yes", "no",
+}
+MEANINGFUL_HINT_WORDS = {
+    "road", "street", "area", "near", "house", "home", "school", "hospital",
+    "injury", "accident", "fire", "theft", "assault", "bleeding", "help",
+    "water", "electricity", "danger", "location", "address", "problem",
+}
 
 
 def _resolve_sqlite_path() -> Path | None:
@@ -302,6 +312,30 @@ async def _activate_resilience_takeover(
             "environment": "quiet",
         },
     })
+
+
+def _tokenize_transcript(transcript: str) -> list[str]:
+    return re.findall(r"[a-zA-Z0-9']+", transcript.lower())
+
+
+def _has_meaningful_content(transcript: str) -> bool:
+    """
+    Short-circuit filter for LLM calls.
+    Only allow reasoning when transcript likely carries actionable detail.
+    """
+    tokens = _tokenize_transcript(transcript)
+    if len(tokens) < 3:
+        return False
+    non_filler = [t for t in tokens if t not in FILLER_WORDS]
+    if not non_filler:
+        return False
+    if any(t.isdigit() for t in non_filler):
+        return True
+    if any(t in MEANINGFUL_HINT_WORDS for t in non_filler):
+        return True
+    # Fallback heuristic: at least two non-filler words with length >= 3.
+    informative = [t for t in non_filler if len(t) >= 3]
+    return len(informative) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -503,10 +537,34 @@ async def ws_call(websocket: WebSocket):
                     # STATE: LISTENING — full triage analysis
                     # ==================================================
                     elif current_state == CallState.LISTENING:
+                        if not _has_meaningful_content(result.text):
+                            call_service.transition_to_listening(session_id)
+                            await _emit_state(websocket, session_id, CallState.LISTENING)
+                            await websocket.send_json({
+                                "type": "metadata",
+                                "data": {
+                                    "session_id": session_id,
+                                    "is_user_speaking": False,
+                                    "detected_sentiment": "neutral",
+                                    "requires_confirmation": False,
+                                    "is_muted": call_service.get_session(session_id).is_muted
+                                    if call_service.get_session(session_id)
+                                    else False,
+                                },
+                            })
+                            await _log_and_persist_transcript(
+                                session_id,
+                                result.text,
+                                CallState.LISTENING,
+                            )
+                            continue
                         try:
                             reasoning, _ = await asyncio.gather(
                                 asyncio.wait_for(
-                                    reasoning_service.analyze(result.text),
+                                    reasoning_service.analyze(
+                                        result.text,
+                                        session_id=session_id,
+                                    ),
                                     timeout=API_GUARD_TIMEOUT_SECONDS,
                                 ),
                                 _log_and_persist_transcript(
@@ -639,6 +697,7 @@ async def ws_call(websocket: WebSocket):
 
                     transcription_service.end_session(session_id)
                     acoustic_service.end_session(session_id)
+                    reasoning_service.reset_session(session_id)
                     call_service.end_session(session_id)
                     manager.disconnect(session_id)
                 await websocket.send_json({
@@ -652,6 +711,7 @@ async def ws_call(websocket: WebSocket):
         if session_id:
             transcription_service.end_session(session_id)
             acoustic_service.end_session(session_id)
+            reasoning_service.reset_session(session_id)
             call_service.end_session(session_id)
             manager.disconnect(session_id)
 

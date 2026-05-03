@@ -83,47 +83,24 @@ class ConfirmationOutput(BaseModel):
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are the **VaakSetu Intelligence Layer**, the AI reasoning engine behind \
-the 1092 emergency helpline.  Your job is to analyze each caller transcript \
-and produce a structured JSON analysis for the human operator.
+[Role] VaakSetu Intelligence Layer for emergency triage.
 
-## Your responsibilities
-1. **Intent classification** — classify as exactly one of:
-   Medical, Fire, Crime, Inquiry.
-2. **Urgency assessment** — score 1-5:
-   1 = general inquiry / no danger
-   2 = non-urgent issue, can wait
-   3 = moderate urgency, needs attention soon
-   4 = high urgency, immediate response recommended
-   5 = life-threatening / active emergency
-3. **Sentiment detection** — capture the caller's emotional state
-   (positive, negative, neutral, fearful, angry, distressed).
-4. **Restatement** — write exactly ONE sentence IN THE CALLER'S LANGUAGE \
-   that paraphrases their issue for confirmation.  If the caller spoke in \
-   Kannada, restate in Kannada.  If Hindi, restate in Hindi.  If English, \
-   restate in English.  For code-switched input, use the dominant language.
-5. **Verification flag** — set `needs_verification` to `true` when:
-   • The transcript is ambiguous or unclear
-   • The caller described a life-threatening situation (urgency ≥ 4)
-   • Key details (location, nature of emergency) are missing
-   • The intent could be interpreted in multiple ways
-6. **Language detection** — output the ISO 639-1 code of the primary \
-   language (en, hi, kn, etc.).
+[Do]
+- Classify intent as exactly one: Medical, Fire, Crime, Inquiry.
+- Score urgency 1-5 (5 = life-threatening / active emergency).
+- Detect sentiment: positive, negative, neutral, fearful, angry, distressed.
+- Restate in exactly one sentence in the caller's dominant language.
+- Detect primary language as ISO code (en, hi, kn, etc.).
+- Set needs_verification=true for ambiguity, missing key details, high stakes, or multi-interpretation risk.
 
-## Linguistic Context
-If a "Linguistic Context" section is provided alongside the transcript, \
-it means regional dialect markers were detected. You MUST:
-- Use the provided definitions to correctly interpret ambiguous terms.
-- If an urgency hint is given, treat it as a MINIMUM for that term.
-- Mirror the caller's dialectal tone in your restatement — do NOT \
-  over-formalize into textbook Kannada or Hindi. Use the SAME regional \
-  phrasing the caller used, so they feel understood and trust the system.
+[Dialect Handling]
+- If a Linguistic Context section exists, use those detected regional definitions.
+- Treat urgency hints as minimum urgency signals.
+- Mirror caller dialect naturally; avoid over-formalized wording.
 
-## Rules
-- NEVER fabricate information not present in the transcript.
-- If the transcript is too short or unintelligible, set intent to "Inquiry", \
-  urgency_level to 1, and needs_verification to true.
-- Always respond with the specified JSON schema — no extra keys, no markdown.
+[Guardrails]
+- Use only facts present in transcript/context.
+- For unintelligible/too-short speech, default to Inquiry with urgency 1 and needs_verification=true.
 """
 
 CONFIRMATION_PROMPT = """\
@@ -159,8 +136,33 @@ class ReasoningService:
             api_key=settings.openrouter_api_key,
         )
         self._model = "google/gemini-2.5-flash"
+        self._turn_history: dict[str, list[str]] = {}
 
-    async def analyze(self, transcript: str) -> ReasoningOutput | None:
+    def _build_recent_context(self, session_id: str | None, transcript: str) -> str:
+        """
+        Keep only the last 3 user turns to reduce prompt tokens.
+        """
+        if not session_id:
+            return transcript
+
+        history = self._turn_history.setdefault(session_id, [])
+        history.append(transcript.strip())
+        if len(history) > 3:
+            self._turn_history[session_id] = history[-3:]
+            history = self._turn_history[session_id]
+
+        lines = [f"Turn {i + 1}: {t}" for i, t in enumerate(history[-3:])]
+        return "\n".join(lines)
+
+    def reset_session(self, session_id: str) -> None:
+        """Clear transcript history for a finished call session."""
+        self._turn_history.pop(session_id, None)
+
+    async def analyze(
+        self,
+        transcript: str,
+        session_id: str | None = None,
+    ) -> ReasoningOutput | None:
         """
         Send the transcript to Gemini and return structured
         reasoning, or ``None`` if the call fails.
@@ -174,23 +176,28 @@ class ReasoningService:
             return None
 
         # --- Cultural context injection ---
+        recent_turns = self._build_recent_context(session_id, transcript)
         cultural_ctx = cultural_context_service.get_context(transcript)
-        user_content = f"Caller transcript:\n\n{transcript}"
+        user_content = f"Recent caller turns (last 3 max):\n\n{recent_turns}"
         if cultural_ctx.context_string:
             user_content += f"\n\n{cultural_ctx.context_string}"
 
         try:
-            response = await self._client.beta.chat.completions.parse(
+            response = await self._client.chat.completions.create(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_content}
                 ],
-                response_format=ReasoningOutput,
+                extra_body={
+                    "response_mime_type": "application/json",
+                    "response_schema": ReasoningOutput.model_json_schema(),
+                },
                 temperature=0.2,
                 max_tokens=500,
             )
-            return response.choices[0].message.parsed
+            content = response.choices[0].message.content or ""
+            return ReasoningOutput.model_validate_json(content)
 
         except Exception as exc:
             print(f"[ReasoningService] OpenRouter/OpenAI error: {exc}")

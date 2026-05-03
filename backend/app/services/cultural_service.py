@@ -17,8 +17,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,6 +48,7 @@ class CulturalContext:
     """Result returned by the service for a given transcript."""
 
     matched_terms: list[SlangEntry] = field(default_factory=list)
+    matched_definitions: list[str] = field(default_factory=list)
     context_string: str = ""
 
 
@@ -364,19 +363,18 @@ class CulturalContextService:
                 seen.add(m.term)
                 unique.append(m)
 
-        context_lines = [
-            "## Linguistic Context (auto-detected regional markers)"
-        ]
+        context_lines = ["## Linguistic Context (only detected terms)"]
+        matched_definitions: list[str] = []
         for entry in unique:
             line = (
-                f"- The caller used the regional term \"{entry.term}\" "
-                f"({entry.region}), which is the dialectal form of "
-                f"\"{entry.canonical}\". In this region it implies: "
-                f"{entry.definition}"
+                f"- \"{entry.term}\" means \"{entry.canonical}\": {entry.definition}"
             )
             if entry.urgency_hint:
                 line += f" [suggested urgency ≥ {entry.urgency_hint}]"
             context_lines.append(line)
+            matched_definitions.append(
+                f"{entry.term}: {entry.definition}"
+            )
 
         context_lines.append(
             "\nAdjust your restatement to reflect these regional nuances. "
@@ -386,6 +384,7 @@ class CulturalContextService:
 
         return CulturalContext(
             matched_terms=unique,
+            matched_definitions=matched_definitions,
             context_string="\n".join(context_lines),
         )
 
