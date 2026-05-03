@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.models import CallMetadata
 from app.services.call_service import call_service
+from app.services.transcription_service import transcription_service
 from app.websockets.connection import manager
 
 
@@ -86,7 +87,7 @@ async def ws_call(websocket: WebSocket):
     """
     await websocket.accept()
     session_id: str | None = None
-    chunk_count = 0
+    was_speaking = False  # track transitions for metadata events
 
     try:
         while True:
@@ -96,23 +97,44 @@ async def ws_call(websocket: WebSocket):
             if msg_type == "start_call":
                 session_id = msg.get("session_id", "unknown")
                 manager.active_connections[session_id] = websocket
+                transcription_service.start_session(session_id)
                 meta = call_service.create_session()
                 meta = meta.model_copy(update={"session_id": session_id})
-                await websocket.send_json({"type": "metadata", "data": meta.model_dump()})
+                await websocket.send_json(
+                    {"type": "metadata", "data": meta.model_dump()}
+                )
 
-            elif msg_type == "audio_chunk":
-                chunk_count += 1
-                # Placeholder: forward to STT service in production.
-                # Every 20 chunks (~5 s) send a simulated transcript update.
-                if chunk_count % 20 == 0 and session_id:
+            elif msg_type == "audio_chunk" and session_id:
+                result = await transcription_service.feed_chunk(
+                    session_id, msg.get("data", "")
+                )
+
+                # Emit speaking-state changes so the frontend can update UI
+                buf = transcription_service._sessions.get(session_id)
+                is_speaking = buf.is_speaking if buf else False
+                if is_speaking != was_speaking:
+                    was_speaking = is_speaking
+                    await websocket.send_json({
+                        "type": "metadata",
+                        "data": {
+                            "session_id": session_id,
+                            "is_user_speaking": is_speaking,
+                            "detected_sentiment": "neutral",
+                            "requires_confirmation": False,
+                        },
+                    })
+
+                # If the service returned a transcript, send it
+                if result and not result.skipped and result.text:
                     await websocket.send_json({
                         "type": "transcript",
-                        "text": f"[audio received — {chunk_count} chunks]",
-                        "is_final": False,
+                        "text": result.text,
+                        "is_final": result.is_final,
                     })
 
             elif msg_type == "end_call":
                 if session_id:
+                    transcription_service.end_session(session_id)
                     manager.disconnect(session_id)
                 await websocket.send_json({
                     "type": "transcript",
@@ -123,6 +145,7 @@ async def ws_call(websocket: WebSocket):
 
     except WebSocketDisconnect:
         if session_id:
+            transcription_service.end_session(session_id)
             manager.disconnect(session_id)
 
 

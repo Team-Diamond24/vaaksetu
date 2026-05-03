@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
+    groq_api_key: str = ""
+
+    # VAD
+    vad_energy_threshold: int = 350
 
     # Database
     database_url: str = "sqlite:///./vaaksetu.db"
