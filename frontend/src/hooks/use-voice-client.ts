@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "@/lib/audio-utils";
-import type { CallMetadata, ClientMessage, ReasoningOutput, ServerMessage } from "@/types";
+import type { AcousticData, CallMetadata, CallState, ClientMessage, ReasoningOutput, ServerMessage } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Public state exposed by the hook                                   */
@@ -10,10 +10,12 @@ export interface VoiceClientState {
   isRecording: boolean;
   callActive: boolean;
   isAiSpeaking: boolean;
+  callState: CallState;
   error: string | null;
   metadata: CallMetadata | null;
   transcript: string;
   reasoning: ReasoningOutput | null;
+  acousticData: AcousticData | null;
 }
 
 export interface VoiceClientActions {
@@ -35,6 +37,8 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const [metadata, setMetadata] = useState<CallMetadata | null>(null);
   const [transcript, setTranscript] = useState("");
   const [reasoning, setReasoning] = useState<ReasoningOutput | null>(null);
+  const [callState, setCallState] = useState<CallState>("LISTENING");
+  const [acousticData, setAcousticData] = useState<AcousticData | null>(null);
 
   /* ---- refs (never cause re-renders) ---- */
   const wsRef = useRef<WebSocket | null>(null);
@@ -207,6 +211,14 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
             setReasoning(msg.data);
             break;
 
+          case "state_change":
+            setCallState(msg.state);
+            break;
+
+          case "acoustic_update":
+            setAcousticData(msg.data);
+            break;
+
           case "error":
             setError(msg.message);
             break;
@@ -323,6 +335,8 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     setMetadata(null);
     setTranscript("");
     setReasoning(null);
+    setCallState("LISTENING");
+    setAcousticData(null);
   }, [send, handleInterrupt]);
 
   /* cleanup on unmount */
@@ -333,10 +347,12 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     isRecording,
     callActive,
     isAiSpeaking,
+    callState,
     error,
     metadata,
     transcript,
     reasoning,
+    acousticData,
     startCall,
     stopCall,
     analyserNode,

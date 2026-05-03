@@ -12,8 +12,14 @@ export interface CallMetadata {
   is_user_speaking: boolean;
 
   /** Detected sentiment of the current speaker */
-  detected_sentiment: "positive" | "negative" | "neutral";
+  detected_sentiment: string;
 
   /** Whether the current action requires user confirmation */
   requires_confirmation: boolean;
+
+  /** Acoustic distress level: 1 (calm) – 5 (extreme distress) */
+  distress_level: number;
+
+  /** Acoustic environment classification */
+  environment: "quiet" | "moderate" | "noisy" | "chaotic";
 }

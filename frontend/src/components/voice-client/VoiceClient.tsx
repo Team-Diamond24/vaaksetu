@@ -1,23 +1,98 @@
-import { Mic, MicOff, PhoneOff } from "lucide-react";
+import { Mic, PhoneOff, ShieldCheck, AlertTriangle, CheckCircle2, Users, Car, Siren, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceClient } from "@/hooks/use-voice-client";
 import { AudioVisualizer } from "./AudioVisualizer";
 import { cn } from "@/lib/utils";
+import type { CallState, AcousticData } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Sentiment badge                                                    */
 /* ------------------------------------------------------------------ */
 function SentimentBadge({ value }: { value: string }) {
   const map: Record<string, { bg: string; label: string }> = {
-    positive: { bg: "bg-emerald-500/20 text-emerald-400", label: "Positive" },
-    negative: { bg: "bg-rose-500/20 text-rose-400", label: "Negative" },
-    neutral:  { bg: "bg-zinc-500/20 text-zinc-400", label: "Neutral" },
+    positive:  { bg: "bg-emerald-500/20 text-emerald-400", label: "Positive" },
+    negative:  { bg: "bg-rose-500/20 text-rose-400",       label: "Negative" },
+    neutral:   { bg: "bg-zinc-500/20 text-zinc-400",       label: "Neutral" },
+    fearful:   { bg: "bg-amber-500/20 text-amber-400",     label: "Fearful" },
+    angry:     { bg: "bg-red-500/20 text-red-400",         label: "Angry" },
+    distressed:{ bg: "bg-orange-500/20 text-orange-400",   label: "Distressed" },
   };
   const s = map[value] ?? map.neutral;
   return (
     <span className={cn("px-3 py-1 rounded-full text-xs font-medium", s.bg)}>
       {s.label}
     </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Call state badge                                                    */
+/* ------------------------------------------------------------------ */
+function StateBadge({ state }: { state: CallState }) {
+  const config: Record<CallState, { bg: string; icon: React.ReactNode; label: string }> = {
+    LISTENING:  { bg: "bg-cyan-500/15 border-cyan-500/30 text-cyan-400",     icon: <Mic className="h-3 w-3" />,             label: "Listening" },
+    VERIFYING:  { bg: "bg-amber-500/15 border-amber-500/30 text-amber-400",  icon: <ShieldCheck className="h-3 w-3" />,     label: "Awaiting Confirmation" },
+    CONFIRMED:  { bg: "bg-emerald-500/15 border-emerald-500/30 text-emerald-400", icon: <CheckCircle2 className="h-3 w-3" />, label: "Confirmed" },
+    ESCALATED:  { bg: "bg-rose-500/15 border-rose-500/30 text-rose-400",     icon: <AlertTriangle className="h-3 w-3" />,   label: "Escalated" },
+  };
+  const c = config[state];
+  return (
+    <span className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border", c.bg)}>
+      {c.icon}
+      {c.label}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Acoustic Monitor Components                                        */
+/* ------------------------------------------------------------------ */
+function DistressMonitor({ data }: { data: AcousticData | null }) {
+  if (!data) return null;
+
+  const getLevelColor = (level: number) => {
+    if (level <= 2) return "bg-emerald-500";
+    if (level <= 3) return "bg-amber-500";
+    return "bg-rose-500";
+  };
+
+  return (
+    <div className="flex flex-col gap-2 w-full max-w-[200px]">
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider font-bold text-muted-foreground/60">
+        <span>Stress Monitor</span>
+        <span className={cn(data.is_high_distress && "text-rose-400 animate-pulse")}>
+          {data.is_high_distress ? "HIGH DISTRESS" : "NORMAL"}
+        </span>
+      </div>
+      <div className="flex gap-1 h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className={cn(
+              "flex-1 transition-all duration-300",
+              i <= data.distress_level ? getLevelColor(data.distress_level) : "bg-white/5"
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EnvironmentIndicator({ env }: { env: AcousticData["environment"] }) {
+  const config = {
+    quiet:    { icon: <Home className="h-4 w-4" />,  label: "Quiet Room", color: "text-emerald-400" },
+    moderate: { icon: <Users className="h-4 w-4" />, label: "Moderate Ambient", color: "text-amber-400" },
+    noisy:    { icon: <Car className="h-4 w-4" />,   label: "Noisy/Traffic", color: "text-orange-400" },
+    chaotic:  { icon: <Siren className="h-4 w-4" />, label: "Chaotic/Emergency", color: "text-rose-400 animate-pulse" },
+  };
+  const c = config[env] || config.quiet;
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
+      <span className={c.color}>{c.icon}</span>
+      <span className="text-[11px] font-medium text-muted-foreground">{c.label}</span>
+    </div>
   );
 }
 
@@ -30,10 +105,12 @@ export function VoiceClient() {
     isRecording,
     callActive,
     isAiSpeaking,
+    callState,
     error,
     metadata,
     transcript,
     reasoning,
+    acousticData,
     startCall,
     stopCall,
     analyserNode,
@@ -48,8 +125,19 @@ export function VoiceClient() {
           "bg-white/5 backdrop-blur-xl shadow-2xl",
           "flex flex-col items-center gap-6 transition-all duration-500",
           callActive && "ring-1 ring-cyan-500/30 shadow-cyan-500/10",
+          callState === "VERIFYING" && "ring-1 ring-amber-500/30 shadow-amber-500/10",
+          callState === "CONFIRMED" && "ring-1 ring-emerald-500/30 shadow-emerald-500/10",
+          acousticData?.is_high_distress && "ring-2 ring-rose-500/50 shadow-rose-500/20 bg-rose-500/5",
         )}
       >
+        {/* ---- Acoustic Header ---- */}
+        {callActive && (
+          <div className="w-full flex items-center justify-between gap-4 px-2">
+            <DistressMonitor data={acousticData} />
+            {acousticData && <EnvironmentIndicator env={acousticData.environment} />}
+          </div>
+        )}
+
         {/* ---- Visualizer ---- */}
         <AudioVisualizer
           analyser={analyserNode.current}
@@ -60,7 +148,10 @@ export function VoiceClient() {
         <div className="relative flex items-center justify-center">
           {/* pulse ring when recording */}
           {isRecording && (
-            <span className="absolute inset-0 rounded-full animate-[voicePulse_2s_ease-in-out_infinite] bg-cyan-500/20" />
+            <span className={cn(
+              "absolute inset-0 rounded-full animate-[voicePulse_2s_ease-in-out_infinite]",
+              acousticData?.is_high_distress ? "bg-rose-500/30" : "bg-cyan-500/20"
+            )} />
           )}
 
           <Button
@@ -81,7 +172,7 @@ export function VoiceClient() {
         </div>
 
         {/* ---- Status row ---- */}
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-3 text-sm flex-wrap justify-center">
           {/* connection dot */}
           <span
             className={cn(
@@ -112,6 +203,29 @@ export function VoiceClient() {
           )}
         </div>
 
+        {/* ---- Call state badge ---- */}
+        {callActive && (
+          <div className="flex items-center gap-2">
+            <StateBadge state={callState} />
+          </div>
+        )}
+
+        {/* ---- Verification prompt ---- */}
+        {callState === "VERIFYING" && (
+          <div className="w-full rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3 text-center animate-pulse">
+            <p className="text-xs text-amber-400/70 font-medium mb-1">⏳ Waiting for your confirmation…</p>
+            <p className="text-sm text-amber-200">Please say <strong>Yes</strong> or <strong>No</strong> to confirm.</p>
+          </div>
+        )}
+
+        {/* ---- Confirmed banner ---- */}
+        {callState === "CONFIRMED" && (
+          <div className="w-full rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-center">
+            <p className="text-xs text-emerald-400/70 font-medium mb-1">✅ Confirmed</p>
+            <p className="text-sm text-emerald-200">Your report has been confirmed. Help is on the way.</p>
+          </div>
+        )}
+
         {/* ---- Transcript ---- */}
         {transcript && (
           <p className="w-full text-center text-sm text-muted-foreground/80 italic truncate px-4">
@@ -130,4 +244,3 @@ export function VoiceClient() {
     </div>
   );
 }
-

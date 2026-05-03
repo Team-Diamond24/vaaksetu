@@ -30,3 +30,12 @@ class CallMetadata(BaseModel):
         default=False,
         description="Whether the current action requires user confirmation",
     )
+    distress_level: int = Field(
+        default=1,
+        ge=1, le=5,
+        description="Acoustic distress level: 1 (calm) – 5 (extreme distress)",
+    )
+    environment: str = Field(
+        default="quiet",
+        description="Acoustic environment: quiet | moderate | noisy | chaotic",
+    )

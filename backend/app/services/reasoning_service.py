@@ -57,8 +57,29 @@ class ReasoningOutput(BaseModel):
     )
 
 
+class ConfirmationOutput(BaseModel):
+    """Result of a binary confirmation check during VERIFYING state."""
+
+    confirmed: bool = Field(
+        description=(
+            "true if the caller said a confirmation word (Yes, Sari, Haan, "
+            "Howdu, OK, Correct, Right, etc.). false if they said a denial "
+            "(No, Alla, Nahi, Beda, Wrong, etc.) or said something ambiguous."
+        )
+    )
+    is_denial: bool = Field(
+        description=(
+            "true if the caller explicitly denied or corrected "
+            "(No, Alla, Nahi, Beda, Wrong, That's not right, etc.)"
+        )
+    )
+    language_code: str = Field(
+        description="ISO 639-1 language code of the response (en, hi, kn)"
+    )
+
+
 # ---------------------------------------------------------------------------
-# System prompt
+# System prompts
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
@@ -96,6 +117,22 @@ and produce a structured JSON analysis for the human operator.
 - Always respond with the specified JSON schema — no extra keys, no markdown.
 """
 
+CONFIRMATION_PROMPT = """\
+You are a binary confirmation detector for the 1092 emergency helpline.
+
+The AI just asked the caller to confirm a restated issue. \
+The caller's response is below. Your ONLY job is to determine:
+1. Did they say YES / confirm? (Sari, Haan, Howdu, Yes, OK, Correct, Right, Ha, etc.)
+2. Did they say NO / deny? (Alla, Nahi, Beda, No, Wrong, That's not right, Galat, etc.)
+3. What language did they respond in?
+
+Rules:
+- If the response is clearly affirmative → confirmed=true, is_denial=false
+- If the response is clearly negative → confirmed=false, is_denial=true
+- If ambiguous or unrelated → confirmed=false, is_denial=false
+- Be generous with affirmative detection — colloquial forms count.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Service
@@ -113,7 +150,7 @@ class ReasoningService:
 
     async def analyze(self, transcript: str) -> ReasoningOutput | None:
         """
-        Send the transcript to Gemini 1.5 Flash and return structured
+        Send the transcript to Gemini and return structured
         reasoning, or ``None`` if the call fails.
         """
         if not transcript or not transcript.strip():
@@ -136,8 +173,34 @@ class ReasoningService:
             print(f"[ReasoningService] Gemini error: {exc}")
             return None
 
+    async def check_confirmation(self, transcript: str) -> ConfirmationOutput | None:
+        """
+        Lightweight Gemini call — used ONLY during VERIFYING state.
+        Detects a binary Yes/No (including Kannada/Hindi equivalents).
+        """
+        if not transcript or not transcript.strip():
+            return None
+
+        try:
+            response = self._client.models.generate_content(
+                model=self._model,
+                contents=f"Caller's response:\n\n{transcript}",
+                config=types.GenerateContentConfig(
+                    system_instruction=CONFIRMATION_PROMPT,
+                    response_mime_type="application/json",
+                    response_json_schema=ConfirmationOutput.model_json_schema(),
+                    temperature=0.1,
+                ),
+            )
+            return ConfirmationOutput.model_validate_json(response.text)
+
+        except Exception as exc:
+            print(f"[ReasoningService] Confirmation check error: {exc}")
+            return None
+
 
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
 reasoning_service = ReasoningService()
+

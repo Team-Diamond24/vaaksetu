@@ -19,6 +19,19 @@ export interface ReasoningOutput {
   language_code: string;
 }
 
+/** Call lifecycle state — mirrors backend CallState enum */
+export type CallState = "LISTENING" | "VERIFYING" | "CONFIRMED" | "ESCALATED";
+
+/** Real-time acoustic analysis data from the backend */
+export interface AcousticData {
+  distress_level: number;
+  environment: "quiet" | "moderate" | "noisy" | "chaotic";
+  is_high_distress: boolean;
+  loudness: "whisper" | "normal" | "loud" | "shouting";
+  rms: number;
+  zcr: number;
+}
+
 /* ---------- client → server ---------- */
 export type ClientMessage =
   | { type: "start_call"; session_id: string }
@@ -34,4 +47,6 @@ export type ServerMessage =
   | { type: "metadata"; data: CallMetadata }
   | { type: "transcript"; text: string; is_final: boolean }
   | { type: "reasoning_update"; data: ReasoningOutput }
+  | { type: "acoustic_update"; data: AcousticData }
+  | { type: "state_change"; state: CallState; session_id: string }
   | { type: "error"; message: string };
