@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "@/lib/audio-utils";
-import type { CallMetadata, ClientMessage, ServerMessage } from "@/types";
+import type { CallMetadata, ClientMessage, ReasoningOutput, ServerMessage } from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Public state exposed by the hook                                   */
@@ -12,6 +12,7 @@ export interface VoiceClientState {
   error: string | null;
   metadata: CallMetadata | null;
   transcript: string;
+  reasoning: ReasoningOutput | null;
 }
 
 export interface VoiceClientActions {
@@ -31,6 +32,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const [error, setError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<CallMetadata | null>(null);
   const [transcript, setTranscript] = useState("");
+  const [reasoning, setReasoning] = useState<ReasoningOutput | null>(null);
 
   /* ---- refs (never cause re-renders) ---- */
   const wsRef = useRef<WebSocket | null>(null);
@@ -96,6 +98,9 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
             break;
           case "transcript":
             setTranscript(msg.text);
+            break;
+          case "reasoning_update":
+            setReasoning(msg.data);
             break;
           case "error":
             setError(msg.message);
@@ -212,6 +217,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     setIsConnected(false);
     setMetadata(null);
     setTranscript("");
+    setReasoning(null);
   }, [send, handleInterrupt]);
 
   /* cleanup on unmount */
@@ -224,6 +230,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     error,
     metadata,
     transcript,
+    reasoning,
     startCall,
     stopCall,
     analyserNode,

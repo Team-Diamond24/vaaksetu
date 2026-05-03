@@ -13,6 +13,7 @@ from app.config import settings
 from app.models import CallMetadata
 from app.services.call_service import call_service
 from app.services.transcription_service import transcription_service
+from app.services.reasoning_service import reasoning_service
 from app.websockets.connection import manager
 
 
@@ -80,10 +81,11 @@ async def ws_call(websocket: WebSocket):
       { type: "end_call",   session_id }
 
     Server messages:
-      { type: "metadata",       data: CallMetadata }
-      { type: "audio_playback", data: "<base64>" }
+      { type: "metadata",          data: CallMetadata }
+      { type: "audio_playback",    data: "<base64>" }
       { type: "interrupt" }
-      { type: "transcript",     text, is_final }
+      { type: "transcript",        text, is_final }
+      { type: "reasoning_update",  data: ReasoningOutput }
     """
     await websocket.accept()
     session_id: str | None = None
@@ -131,6 +133,25 @@ async def ws_call(websocket: WebSocket):
                         "text": result.text,
                         "is_final": result.is_final,
                     })
+
+                    # --- Reasoning pipeline ---
+                    reasoning = await reasoning_service.analyze(result.text)
+                    if reasoning:
+                        await websocket.send_json({
+                            "type": "reasoning_update",
+                            "data": reasoning.model_dump(),
+                        })
+
+                        # Propagate sentiment back as metadata
+                        await websocket.send_json({
+                            "type": "metadata",
+                            "data": {
+                                "session_id": session_id,
+                                "is_user_speaking": False,
+                                "detected_sentiment": reasoning.sentiment,
+                                "requires_confirmation": reasoning.needs_verification,
+                            },
+                        })
 
             elif msg_type == "end_call":
                 if session_id:
