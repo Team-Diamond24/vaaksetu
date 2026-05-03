@@ -1,4 +1,4 @@
-import { Mic, PhoneOff, ShieldCheck, AlertTriangle, CheckCircle2, Users, Car, Siren, Home } from "lucide-react";
+import { Mic, MicOff, PhoneOff, ShieldCheck, AlertTriangle, CheckCircle2, Users, Car, Siren, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceClient } from "@/hooks/use-voice-client";
 import { AudioVisualizer } from "./AudioVisualizer";
@@ -105,6 +105,8 @@ export function VoiceClient() {
     isRecording,
     callActive,
     isAiSpeaking,
+    isAiMuted,
+    isThinking,
     callState,
     error,
     metadata,
@@ -113,6 +115,7 @@ export function VoiceClient() {
     acousticData,
     startCall,
     stopCall,
+    toggleTakeover,
     analyserNode,
   } = useVoiceClient();
 
@@ -171,6 +174,33 @@ export function VoiceClient() {
           </Button>
         </div>
 
+        {/* ---- Human takeover toggle ---- */}
+        {callActive && (
+          <Button
+            id="takeover-toggle"
+            onClick={toggleTakeover}
+            className={cn(
+              "w-full h-12 rounded-xl text-sm font-bold tracking-wide border-2 cursor-pointer",
+              isAiMuted
+                ? "bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border-rose-500/60"
+                : "bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-400/60"
+            )}
+            variant="ghost"
+          >
+            {isAiMuted ? (
+              <>
+                <Mic className="h-4 w-4 mr-2" />
+                RELEASE TO AI
+              </>
+            ) : (
+              <>
+                <MicOff className="h-4 w-4 mr-2" />
+                TAKE OVER CALL
+              </>
+            )}
+          </Button>
+        )}
+
         {/* ---- Status row ---- */}
         <div className="flex items-center gap-3 text-sm flex-wrap justify-center">
           {/* connection dot */}
@@ -188,7 +218,9 @@ export function VoiceClient() {
                 : isAiSpeaking
                   ? "AI Speaking…"
                   : isConnected
-                    ? "Connected"
+                    ? isThinking
+                      ? "Thinking..."
+                      : "Connected"
                     : "Connecting…"}
           </span>
 
@@ -199,6 +231,12 @@ export function VoiceClient() {
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
               <span className="text-xs text-violet-400 font-medium">TTS</span>
+            </span>
+          )}
+          {isAiMuted && (
+            <span className="flex items-center gap-1.5 text-rose-300">
+              <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+              <span className="text-xs font-semibold tracking-wide">Human in Control</span>
             </span>
           )}
         </div>

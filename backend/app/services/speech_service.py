@@ -36,8 +36,8 @@ VOICE_MAP: dict[str, str] = {
 DEFAULT_VOICE = "en-IN-NeerjaNeural"
 
 # Chunk size (bytes) for streaming over WebSocket.
-# ~8 KB gives a good balance between latency and overhead.
-STREAM_CHUNK_SIZE = 8192
+# ~4 KB lowers first-byte latency while keeping overhead manageable.
+STREAM_CHUNK_SIZE = 4096
 
 
 # ---------------------------------------------------------------------------
@@ -82,24 +82,20 @@ class SpeechService:
             volume="+0%",
         )
 
-        # Collect audio bytes from the edge-tts stream
-        audio_buffer = io.BytesIO()
+        # Stream audio bytes with small buffering for low latency.
+        pending = bytearray()
 
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
-                audio_buffer.write(chunk["data"])
-
-                # Once we have enough data, yield a chunk
-                if audio_buffer.tell() >= STREAM_CHUNK_SIZE:
-                    audio_buffer.seek(0)
-                    data = audio_buffer.read()
+                pending.extend(chunk["data"])
+                while len(pending) >= STREAM_CHUNK_SIZE:
+                    data = bytes(pending[:STREAM_CHUNK_SIZE])
+                    del pending[:STREAM_CHUNK_SIZE]
                     yield base64.b64encode(data).decode("ascii")
-                    audio_buffer = io.BytesIO()
 
         # Flush any remaining bytes
-        if audio_buffer.tell() > 0:
-            audio_buffer.seek(0)
-            yield base64.b64encode(audio_buffer.read()).decode("ascii")
+        if pending:
+            yield base64.b64encode(bytes(pending)).decode("ascii")
 
     async def synthesize_full(
         self, text: str, language_code: str = "en"

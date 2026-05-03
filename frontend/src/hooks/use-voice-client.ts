@@ -10,6 +10,8 @@ export interface VoiceClientState {
   isRecording: boolean;
   callActive: boolean;
   isAiSpeaking: boolean;
+  isAiMuted: boolean;
+  isThinking: boolean;
   callState: CallState;
   error: string | null;
   metadata: CallMetadata | null;
@@ -21,6 +23,7 @@ export interface VoiceClientState {
 export interface VoiceClientActions {
   startCall: () => Promise<void>;
   stopCall: () => void;
+  toggleTakeover: () => void;
   analyserNode: React.RefObject<AnalyserNode | null>;
 }
 
@@ -33,6 +36,8 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const [isRecording, setIsRecording] = useState(false);
   const [callActive, setCallActive] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [isAiMuted, setIsAiMuted] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<CallMetadata | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -50,9 +55,14 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const sessionIdRef = useRef<string>("");
 
   /* ---- TTS audio queue refs ---- */
-  const audioChunkQueue = useRef<string[]>([]);
+  const audioChunkQueue = useRef<ArrayBuffer[]>([]);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsBlobUrlRef = useRef<string | null>(null);
+  const ttsMediaSourceRef = useRef<MediaSource | null>(null);
+  const ttsSourceBufferRef = useRef<SourceBuffer | null>(null);
+  const ttsStreamDoneRef = useRef(false);
+  const ttsJitterTimerRef = useRef<number | null>(null);
+  const wasUserSpeakingRef = useRef(false);
 
   /* ---- helpers ---- */
   const send = useCallback((msg: ClientMessage) => {
@@ -69,10 +79,99 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     }
   }, []);
 
+  const clearTtsJitterTimer = useCallback(() => {
+    if (ttsJitterTimerRef.current !== null) {
+      window.clearTimeout(ttsJitterTimerRef.current);
+      ttsJitterTimerRef.current = null;
+    }
+  }, []);
+
+  const maybeFinalizeTtsStream = useCallback(() => {
+    const mediaSource = ttsMediaSourceRef.current;
+    const sourceBuffer = ttsSourceBufferRef.current;
+    if (!mediaSource || mediaSource.readyState !== "open" || !ttsStreamDoneRef.current) {
+      return;
+    }
+    if (sourceBuffer?.updating) return;
+    if (audioChunkQueue.current.length > 0) return;
+    try {
+      mediaSource.endOfStream();
+    } catch {
+      /* no-op */
+    }
+  }, []);
+
+  const appendNextTtsChunk = useCallback(() => {
+    const sourceBuffer = ttsSourceBufferRef.current;
+    if (!sourceBuffer || sourceBuffer.updating) return;
+    const next = audioChunkQueue.current.shift();
+    if (!next) {
+      maybeFinalizeTtsStream();
+      return;
+    }
+    try {
+      sourceBuffer.appendBuffer(next);
+    } catch (err) {
+      console.error("[VoiceClient] sourceBuffer append error:", err);
+      maybeFinalizeTtsStream();
+    }
+  }, [maybeFinalizeTtsStream]);
+
+  const ensureStreamingTtsPlayback = useCallback(() => {
+    if (ttsAudioRef.current || ttsMediaSourceRef.current) return;
+
+    revokeTtsBlobUrl();
+    const mediaSource = new MediaSource();
+    ttsMediaSourceRef.current = mediaSource;
+
+    const url = URL.createObjectURL(mediaSource);
+    ttsBlobUrlRef.current = url;
+
+    const audio = new Audio(url);
+    audio.preload = "auto";
+    ttsAudioRef.current = audio;
+    setIsAiSpeaking(true);
+
+    mediaSource.addEventListener("sourceopen", () => {
+      if (mediaSource.readyState !== "open") return;
+      try {
+        const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+        sourceBuffer.mode = "sequence";
+        ttsSourceBufferRef.current = sourceBuffer;
+        sourceBuffer.addEventListener("updateend", appendNextTtsChunk);
+        appendNextTtsChunk();
+      } catch (err) {
+        console.error("[VoiceClient] MediaSource init error:", err);
+        setIsAiSpeaking(false);
+      }
+    });
+
+    audio.onended = () => {
+      setIsAiSpeaking(false);
+      ttsAudioRef.current = null;
+      ttsMediaSourceRef.current = null;
+      ttsSourceBufferRef.current = null;
+      revokeTtsBlobUrl();
+    };
+
+    audio.onerror = () => {
+      console.error("[VoiceClient] TTS streaming playback error");
+      setIsAiSpeaking(false);
+      ttsAudioRef.current = null;
+      ttsMediaSourceRef.current = null;
+      ttsSourceBufferRef.current = null;
+      revokeTtsBlobUrl();
+    };
+
+    audio.play().catch((e) => {
+      console.error("[VoiceClient] TTS autoplay blocked:", e);
+      setIsAiSpeaking(false);
+    });
+  }, [appendNextTtsChunk, revokeTtsBlobUrl]);
+
   /**
    * Barge-in: immediately kill ALL ongoing playback.
-   * Stops both legacy AudioBufferSourceNode playback and the new
-   * HTMLAudioElement-based TTS queue.
+   * Stops both legacy AudioBufferSourceNode playback and streaming TTS.
    */
   const handleInterrupt = useCallback(() => {
     // Stop legacy BufferSource playback
@@ -93,62 +192,16 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
 
     // Clear pending audio chunks
     audioChunkQueue.current = [];
+    ttsStreamDoneRef.current = false;
+    ttsMediaSourceRef.current = null;
+    ttsSourceBufferRef.current = null;
+    clearTtsJitterTimer();
 
     // Clean up blob URL
     revokeTtsBlobUrl();
 
     setIsAiSpeaking(false);
-  }, [revokeTtsBlobUrl]);
-
-  /**
-   * Concatenate all queued Base64 chunks into a single MP3 blob,
-   * then play it via an HTMLAudioElement (most reliable for MP3).
-   */
-  const flushAndPlayTtsQueue = useCallback(() => {
-    const chunks = audioChunkQueue.current;
-    if (chunks.length === 0) return;
-
-    // Decode all Base64 chunks and concatenate into one ArrayBuffer
-    const buffers = chunks.map((b64) => base64ToArrayBuffer(b64));
-    const totalLength = buffers.reduce((acc, b) => acc + b.byteLength, 0);
-    const combined = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const buf of buffers) {
-      combined.set(new Uint8Array(buf), offset);
-      offset += buf.byteLength;
-    }
-
-    // Clear the queue
-    audioChunkQueue.current = [];
-
-    // Create Blob URL and play
-    revokeTtsBlobUrl();
-    const blob = new Blob([combined.buffer], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    ttsBlobUrlRef.current = url;
-
-    const audio = new Audio(url);
-    ttsAudioRef.current = audio;
-    setIsAiSpeaking(true);
-
-    audio.onended = () => {
-      setIsAiSpeaking(false);
-      ttsAudioRef.current = null;
-      revokeTtsBlobUrl();
-    };
-
-    audio.onerror = () => {
-      console.error("[VoiceClient] TTS playback error");
-      setIsAiSpeaking(false);
-      ttsAudioRef.current = null;
-      revokeTtsBlobUrl();
-    };
-
-    audio.play().catch((e) => {
-      console.error("[VoiceClient] TTS autoplay blocked:", e);
-      setIsAiSpeaking(false);
-    });
-  }, [revokeTtsBlobUrl]);
+  }, [clearTtsJitterTimer, revokeTtsBlobUrl]);
 
   /** Decode Base64 audio from backend and play it (legacy single-shot) */
   const playAudio = useCallback(async (b64: string) => {
@@ -186,29 +239,50 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
             break;
 
           case "audio_chunk":
-            // Queue incoming TTS audio chunk
-            audioChunkQueue.current.push(msg.data);
+            // Queue incoming TTS bytes and start playback with small jitter buffer.
+            audioChunkQueue.current.push(base64ToArrayBuffer(msg.data));
+            ttsStreamDoneRef.current = false;
+            ensureStreamingTtsPlayback();
+            if (ttsJitterTimerRef.current === null) {
+              ttsJitterTimerRef.current = window.setTimeout(() => {
+                ttsJitterTimerRef.current = null;
+                appendNextTtsChunk();
+              }, 80);
+            }
             break;
 
           case "audio_done":
-            // All TTS chunks received — concatenate and play
-            flushAndPlayTtsQueue();
+            // Signal stream completion; flush remaining pending chunks.
+            ttsStreamDoneRef.current = true;
+            appendNextTtsChunk();
             break;
 
           case "metadata":
             setMetadata(msg.data);
+            setIsAiMuted(Boolean(msg.data.is_muted));
+            if (wasUserSpeakingRef.current && !msg.data.is_user_speaking) {
+              setIsThinking(true);
+            }
+            wasUserSpeakingRef.current = msg.data.is_user_speaking;
             // Barge-in: if user starts speaking, stop AI audio
             if (msg.data.is_user_speaking) {
+              setIsThinking(false);
+              handleInterrupt();
+            }
+            // Human takeover immediately silences any in-progress AI speech.
+            if (msg.data.is_muted) {
               handleInterrupt();
             }
             break;
 
           case "transcript":
             setTranscript(msg.text);
+            setIsThinking(false);
             break;
 
           case "reasoning_update":
             setReasoning(msg.data);
+            setIsThinking(false);
             break;
 
           case "state_change":
@@ -221,13 +295,14 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
 
           case "error":
             setError(msg.message);
+            setIsThinking(false);
             break;
         }
       } catch {
         console.warn("[VoiceClient] unparseable WS message");
       }
     },
-    [handleInterrupt, playAudio, flushAndPlayTtsQueue],
+    [appendNextTtsChunk, ensureStreamingTtsPlayback, handleInterrupt, playAudio],
   );
 
   /* ---- start / stop ---- */
@@ -343,7 +418,15 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     setReasoning(null);
     setCallState("LISTENING");
     setAcousticData(null);
+    setIsAiMuted(false);
+    setIsThinking(false);
+    wasUserSpeakingRef.current = false;
   }, [send, handleInterrupt]);
+
+  const toggleTakeover = useCallback(() => {
+    if (!sessionIdRef.current) return;
+    send({ type: "TOGGLE_TAKEOVER", session_id: sessionIdRef.current });
+  }, [send]);
 
   /* cleanup on unmount */
   useEffect(() => stopCall, [stopCall]);
@@ -353,6 +436,8 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     isRecording,
     callActive,
     isAiSpeaking,
+    isAiMuted,
+    isThinking,
     callState,
     error,
     metadata,
@@ -361,6 +446,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     acousticData,
     startCall,
     stopCall,
+    toggleTakeover,
     analyserNode,
   };
 }

@@ -27,6 +27,8 @@ export function SupervisorDashboard() {
     isRecording,
     callActive,
     isAiSpeaking,
+    isAiMuted,
+    isThinking,
     callState,
     error,
     metadata,
@@ -139,10 +141,18 @@ export function SupervisorDashboard() {
                     : isAiSpeaking
                       ? "AI Speaking"
                       : isConnected
-                        ? "Live"
+                        ? isThinking
+                          ? "Thinking..."
+                          : "Live"
                         : "Connecting…"}
               </span>
             </div>
+
+            {callActive && isAiMuted && (
+              <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 bg-rose-500/15 border border-rose-500/30 px-3 py-1 rounded-full">
+                Human in Control
+              </span>
+            )}
 
             {/* Call toggle */}
             <Button

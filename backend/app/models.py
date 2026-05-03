@@ -30,6 +30,10 @@ class CallMetadata(BaseModel):
         default=False,
         description="Whether the current action requires user confirmation",
     )
+    is_muted: bool = Field(
+        default=False,
+        description="Whether AI speech output is muted for human takeover",
+    )
     distress_level: int = Field(
         default=1,
         ge=1, le=5,

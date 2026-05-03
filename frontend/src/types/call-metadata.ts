@@ -17,6 +17,9 @@ export interface CallMetadata {
   /** Whether the current action requires user confirmation */
   requires_confirmation: boolean;
 
+  /** Whether AI speech output is muted for human takeover */
+  is_muted: boolean;
+
   /** Acoustic distress level: 1 (calm) – 5 (extreme distress) */
   distress_level: number;
 

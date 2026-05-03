@@ -5,9 +5,12 @@ Run with:
     uvicorn app.main:app --reload
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+import sqlite3
 
 from app.config import settings
 from app.models import CallMetadata
@@ -118,6 +121,63 @@ DENIED_MESSAGES = {
 }
 
 
+def _resolve_sqlite_path() -> Path | None:
+    """Resolve sqlite file path from app database_url, if configured."""
+    if not settings.database_url.startswith("sqlite:///"):
+        return None
+    db_path = settings.database_url.removeprefix("sqlite:///")
+    return Path(db_path).resolve()
+
+
+def _write_transcript_row(
+    session_id: str,
+    transcript: str,
+    call_state: str,
+) -> None:
+    """Persist transcript to local sqlite for later analytics/replay."""
+    db_path = _resolve_sqlite_path()
+    if db_path is None:
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transcript_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                transcript TEXT NOT NULL,
+                call_state TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript_events (session_id, transcript, call_state)
+            VALUES (?, ?, ?)
+            """,
+            (session_id, transcript, call_state),
+        )
+        conn.commit()
+
+
+async def _log_and_persist_transcript(
+    session_id: str,
+    transcript: str,
+    call_state: CallState,
+) -> None:
+    """Background-safe transcript logging/persistence path."""
+    print(
+        f"[Transcript] session={session_id} state={call_state.value} text={transcript}"
+    )
+    await asyncio.to_thread(
+        _write_transcript_row,
+        session_id,
+        transcript,
+        call_state.value,
+    )
+
+
 # ---------------------------------------------------------------------------
 # WebSocket endpoint for VoiceClient audio streaming
 # NOTE: Must be registered BEFORE /ws/{session_id} to avoid path conflict.
@@ -189,6 +249,7 @@ async def ws_call(websocket: WebSocket):
                 # Emit speaking-state + acoustic changes
                 if is_speaking != was_speaking:
                     was_speaking = is_speaking
+                    session = call_service.get_session(session_id)
                     await websocket.send_json({
                         "type": "metadata",
                         "data": {
@@ -196,6 +257,7 @@ async def ws_call(websocket: WebSocket):
                             "is_user_speaking": is_speaking,
                             "detected_sentiment": "neutral",
                             "requires_confirmation": False,
+                            "is_muted": session.is_muted if session else False,
                             "distress_level": acoustic.distress_level,
                             "environment": acoustic.environment,
                         },
@@ -243,7 +305,9 @@ async def ws_call(websocket: WebSocket):
                             lang = confirmation.language_code or "en"
                             confirm_msg = CONFIRMED_MESSAGES.get(lang, CONFIRMED_MESSAGES["en"])
                             transcription_service.clear_buffer(session_id)
-                            await _stream_tts(websocket, confirm_msg, lang)
+                            session = call_service.get_session(session_id)
+                            if not (session and session.is_muted):
+                                await _stream_tts(websocket, confirm_msg, lang)
 
                         elif confirmation and confirmation.is_denial:
                             # ❌ User denied → back to LISTENING
@@ -253,24 +317,34 @@ async def ws_call(websocket: WebSocket):
                             lang = confirmation.language_code or "en"
                             deny_msg = DENIED_MESSAGES.get(lang, DENIED_MESSAGES["en"])
                             transcription_service.clear_buffer(session_id)
-                            await _stream_tts(websocket, deny_msg, lang)
+                            session = call_service.get_session(session_id)
+                            if not (session and session.is_muted):
+                                await _stream_tts(websocket, deny_msg, lang)
 
                         else:
                             # 🤷 Ambiguous — re-prompt for confirmation
                             session = call_service.get_session(session_id)
                             lang = session.last_language_code if session else "en"
                             transcription_service.clear_buffer(session_id)
-                            await _stream_tts(
-                                websocket,
-                                "Could you please say Yes or No to confirm?",
-                                lang,
-                            )
+                            if not (session and session.is_muted):
+                                await _stream_tts(
+                                    websocket,
+                                    "Could you please say Yes or No to confirm?",
+                                    lang,
+                                )
 
                     # ==================================================
                     # STATE: LISTENING — full triage analysis
                     # ==================================================
                     elif current_state == CallState.LISTENING:
-                        reasoning = await reasoning_service.analyze(result.text)
+                        reasoning, _ = await asyncio.gather(
+                            reasoning_service.analyze(result.text),
+                            _log_and_persist_transcript(
+                                session_id,
+                                result.text,
+                                current_state,
+                            ),
+                        )
                         if reasoning:
                             await websocket.send_json({
                                 "type": "reasoning_update",
@@ -285,6 +359,9 @@ async def ws_call(websocket: WebSocket):
                                     "is_user_speaking": False,
                                     "detected_sentiment": reasoning.sentiment,
                                     "requires_confirmation": reasoning.needs_verification,
+                                    "is_muted": call_service.get_session(session_id).is_muted
+                                    if call_service.get_session(session_id)
+                                    else False,
                                 },
                             })
 
@@ -302,11 +379,13 @@ async def ws_call(websocket: WebSocket):
                             # TTS: speak the restatement
                             if reasoning.restatement:
                                 transcription_service.clear_buffer(session_id)
-                                await _stream_tts(
-                                    websocket,
-                                    reasoning.restatement,
-                                    reasoning.language_code,
-                                )
+                                session = call_service.get_session(session_id)
+                                if not (session and session.is_muted):
+                                    await _stream_tts(
+                                        websocket,
+                                        reasoning.restatement,
+                                        reasoning.language_code,
+                                    )
 
                     # ==================================================
                     # STATE: CONFIRMED — already confirmed, no new analysis
@@ -314,6 +393,25 @@ async def ws_call(websocket: WebSocket):
                     elif current_state == CallState.CONFIRMED:
                         # Could handle follow-up questions here in the future
                         pass
+
+            # ==============================================================
+            # TOGGLE TAKEOVER (AI mute)
+            # ==============================================================
+            elif msg_type == "TOGGLE_TAKEOVER" and session_id:
+                muted = call_service.toggle_mute(session_id)
+                session = call_service.get_session(session_id)
+                await websocket.send_json({
+                    "type": "metadata",
+                    "data": {
+                        "session_id": session_id,
+                        "is_user_speaking": False,
+                        "detected_sentiment": "neutral",
+                        "requires_confirmation": False,
+                        "is_muted": muted,
+                        "distress_level": 1 if session is None else session.last_urgency,
+                        "environment": "quiet",
+                    },
+                })
 
             # ==============================================================
             # END CALL

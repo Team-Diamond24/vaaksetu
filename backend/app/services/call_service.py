@@ -42,6 +42,7 @@ class SessionState:
     last_restatement: str = ""
     last_intent: str = ""
     last_urgency: int = 1
+    is_muted: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,7 @@ class CallService:
             is_user_speaking=False,
             detected_sentiment="neutral",
             requires_confirmation=False,
+            is_muted=False,
         )
 
     def end_session(self, session_id: str) -> None:
@@ -123,6 +125,15 @@ class CallService:
         if s:
             s.state = CallState.ESCALATED
             print(f"[CallState] {session_id} → ESCALATED")
+
+    def toggle_mute(self, session_id: str) -> bool:
+        """Flip AI mute state for a session and return the new value."""
+        s = self._sessions.get(session_id)
+        if not s:
+            return False
+        s.is_muted = not s.is_muted
+        print(f"[CallState] {session_id} mute={s.is_muted}")
+        return s.is_muted
 
     # -- helpers -------------------------------------------------------------
 

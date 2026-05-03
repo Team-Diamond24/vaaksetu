@@ -36,7 +36,8 @@ export interface AcousticData {
 export type ClientMessage =
   | { type: "start_call"; session_id: string }
   | { type: "end_call"; session_id: string }
-  | { type: "audio_chunk"; data: string; session_id: string };
+  | { type: "audio_chunk"; data: string; session_id: string }
+  | { type: "TOGGLE_TAKEOVER"; session_id: string };
 
 /* ---------- server → client ---------- */
 export type ServerMessage =
