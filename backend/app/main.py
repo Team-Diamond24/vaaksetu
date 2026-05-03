@@ -21,9 +21,9 @@ from app.websockets.connection import manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown hooks."""
-    print(f"🚀  Vaaksetu backend starting ({settings.app_env})")
+    print(f"[START] Vaaksetu backend starting ({settings.app_env})")
     yield
-    print("👋  Vaaksetu backend shutting down")
+    print("[STOP] Vaaksetu backend shutting down")
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,69 @@ async def create_session():
 
 
 # ---------------------------------------------------------------------------
-# WebSocket endpoint
+# WebSocket endpoint for VoiceClient audio streaming
+# NOTE: Must be registered BEFORE /ws/{session_id} to avoid path conflict.
+# ---------------------------------------------------------------------------
+@app.websocket("/ws/call")
+async def ws_call(websocket: WebSocket):
+    """
+    Audio-streaming WebSocket used by the VoiceClient component.
+
+    Client messages:
+      { type: "start_call", session_id }
+      { type: "audio_chunk", data: "<base64 Int16 PCM>", session_id }
+      { type: "end_call",   session_id }
+
+    Server messages:
+      { type: "metadata",       data: CallMetadata }
+      { type: "audio_playback", data: "<base64>" }
+      { type: "interrupt" }
+      { type: "transcript",     text, is_final }
+    """
+    await websocket.accept()
+    session_id: str | None = None
+    chunk_count = 0
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            msg_type = msg.get("type")
+
+            if msg_type == "start_call":
+                session_id = msg.get("session_id", "unknown")
+                manager.active_connections[session_id] = websocket
+                meta = call_service.create_session()
+                meta = meta.model_copy(update={"session_id": session_id})
+                await websocket.send_json({"type": "metadata", "data": meta.model_dump()})
+
+            elif msg_type == "audio_chunk":
+                chunk_count += 1
+                # Placeholder: forward to STT service in production.
+                # Every 20 chunks (~5 s) send a simulated transcript update.
+                if chunk_count % 20 == 0 and session_id:
+                    await websocket.send_json({
+                        "type": "transcript",
+                        "text": f"[audio received — {chunk_count} chunks]",
+                        "is_final": False,
+                    })
+
+            elif msg_type == "end_call":
+                if session_id:
+                    manager.disconnect(session_id)
+                await websocket.send_json({
+                    "type": "transcript",
+                    "text": "Call ended.",
+                    "is_final": True,
+                })
+                break
+
+    except WebSocketDisconnect:
+        if session_id:
+            manager.disconnect(session_id)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint (generic)
 # ---------------------------------------------------------------------------
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -82,3 +144,5 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await manager.send_metadata(session_id, metadata)
     except WebSocketDisconnect:
         manager.disconnect(session_id)
+
+
