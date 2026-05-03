@@ -32,6 +32,13 @@ export interface AcousticData {
   zcr: number;
 }
 
+export interface PerformanceReport {
+  understanding_score: number;
+  cultural_accuracy: number;
+  bottleneck_detected: string;
+  coaching_tip: string;
+}
+
 /* ---------- client → server ---------- */
 export type ClientMessage =
   | { type: "start_call"; session_id: string }
@@ -48,6 +55,7 @@ export type ServerMessage =
   | { type: "metadata"; data: CallMetadata }
   | { type: "transcript"; text: string; is_final: boolean }
   | { type: "reasoning_update"; data: ReasoningOutput }
+  | { type: "call_summary"; data: PerformanceReport }
   | { type: "acoustic_update"; data: AcousticData }
   | { type: "state_change"; state: CallState; session_id: string }
   | { type: "error"; message: string };

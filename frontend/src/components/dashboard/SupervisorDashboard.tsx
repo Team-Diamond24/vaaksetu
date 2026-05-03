@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, PhoneOff, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,6 +35,7 @@ export function SupervisorDashboard() {
     transcript,
     reasoning,
     acousticData,
+    callSummary,
     startCall,
     stopCall,
     analyserNode,
@@ -42,6 +43,7 @@ export function SupervisorDashboard() {
 
   /* ---- Transcript history ---- */
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
   const lastTranscriptRef = useRef("");
   const lastRestatementRef = useRef("");
 
@@ -91,6 +93,7 @@ export function SupervisorDashboard() {
       lastTranscriptRef.current = "";
       lastRestatementRef.current = "";
     } else {
+      setShowSummaryModal(false);
       await startCall();
     }
   }, [callActive, startCall, stopCall]);
@@ -100,6 +103,32 @@ export function SupervisorDashboard() {
   const sentiment = reasoning?.sentiment ?? metadata?.detected_sentiment ?? "neutral";
   const langCode = reasoning?.language_code ?? "—";
   const isHighDistress = acousticData?.is_high_distress ?? false;
+  const shouldShowSummary = !callActive && !!callSummary && showSummaryModal;
+
+  useEffect(() => {
+    if (!callActive && callSummary) {
+      setShowSummaryModal(true);
+    }
+  }, [callActive, callSummary]);
+
+  const ScoreRing = ({ value, label, ringColor }: { value: number; label: string; ringColor: string }) => {
+    const pct = Math.min(100, Math.max(0, value * 10));
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <div
+          className="relative h-24 w-24 rounded-full grid place-items-center"
+          style={{
+            background: `conic-gradient(${ringColor} ${pct}%, rgba(255,255,255,0.08) ${pct}% 100%)`,
+          }}
+        >
+          <div className="h-16 w-16 rounded-full bg-zinc-950/90 border border-white/10 grid place-items-center text-lg font-bold text-white">
+            {value}
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
+    );
+  };
 
   return (
     <div className="dark min-h-screen bg-background text-foreground">
@@ -283,6 +312,39 @@ export function SupervisorDashboard() {
           </div>
         </div>
       </main>
+
+      {shouldShowSummary && callSummary && (
+        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-2xl border-white/15 bg-zinc-950/95 shadow-2xl">
+            <CardContent className="p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold">Call Summary</h2>
+                  <p className="text-xs text-muted-foreground">Post-call performance report</p>
+                </div>
+                <Button variant="ghost" onClick={() => setShowSummaryModal(false)} className="cursor-pointer">
+                  Close
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-6">
+                <ScoreRing value={callSummary.understanding_score} label="Understanding Score" ringColor="#22d3ee" />
+                <ScoreRing value={callSummary.cultural_accuracy} label="Cultural Accuracy" ringColor="#34d399" />
+              </div>
+
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+                <p className="text-[10px] uppercase tracking-widest text-amber-300/80 mb-1">Bottleneck Detected</p>
+                <p className="text-sm text-amber-100">{callSummary.bottleneck_detected}</p>
+              </div>
+
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-4">
+                <p className="text-[10px] uppercase tracking-widest text-violet-300/80 mb-1">Coaching Tip</p>
+                <p className="text-sm text-violet-100">{callSummary.coaching_tip}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

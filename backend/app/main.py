@@ -7,6 +7,7 @@ Run with:
 
 import asyncio
 from contextlib import asynccontextmanager
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.services.transcription_service import transcription_service
 from app.services.reasoning_service import reasoning_service
 from app.services.speech_service import speech_service
 from app.services.acoustic_service import acoustic_service
+from app.services.analytics_service import analytics_service
 from app.websockets.connection import manager
 
 
@@ -120,6 +122,11 @@ DENIED_MESSAGES = {
     "kn": "ತಪ್ಪು ತಿಳುವಳಿಕೆಗೆ ಕ್ಷಮಿಸಿ. ನಾನು ಸರಿಯಾಗಿ ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲು ದಯವಿಟ್ಟು ವಿವರಗಳನ್ನು ಮತ್ತೊಮ್ಮೆ ಹೇಳಿ.",
 }
 
+FALLBACK_TECHNICAL_GLITCH_MESSAGE = (
+    "I am experiencing a technical glitch, connecting you to an operator immediately."
+)
+API_GUARD_TIMEOUT_SECONDS = 4.0
+
 
 def _resolve_sqlite_path() -> Path | None:
     """Resolve sqlite file path from app database_url, if configured."""
@@ -147,10 +154,19 @@ def _write_transcript_row(
                 session_id TEXT NOT NULL,
                 transcript TEXT NOT NULL,
                 call_state TEXT NOT NULL,
+                analytics_report TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(transcript_events)").fetchall()
+        }
+        if "analytics_report" not in columns:
+            conn.execute(
+                "ALTER TABLE transcript_events ADD COLUMN analytics_report TEXT"
+            )
         conn.execute(
             """
             INSERT INTO transcript_events (session_id, transcript, call_state)
@@ -158,6 +174,86 @@ def _write_transcript_row(
             """,
             (session_id, transcript, call_state),
         )
+        conn.commit()
+
+
+def _read_session_transcript_timeline(session_id: str) -> str:
+    """Build chronological transcript timeline for a session."""
+    db_path = _resolve_sqlite_path()
+    if db_path is None:
+        return ""
+    if not db_path.exists():
+        return ""
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transcript_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                transcript TEXT NOT NULL,
+                call_state TEXT NOT NULL,
+                analytics_report TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        rows = conn.execute(
+            """
+            SELECT call_state, transcript
+            FROM transcript_events
+            WHERE session_id = ?
+            ORDER BY id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+    return "\n".join([f"[{state}] {text}" for state, text in rows])
+
+
+def _write_final_report(session_id: str, report_json: str) -> None:
+    """Persist final post-call report to session rows."""
+    db_path = _resolve_sqlite_path()
+    if db_path is None:
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transcript_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                transcript TEXT NOT NULL,
+                call_state TEXT NOT NULL,
+                analytics_report TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(transcript_events)").fetchall()
+        }
+        if "analytics_report" not in columns:
+            conn.execute(
+                "ALTER TABLE transcript_events ADD COLUMN analytics_report TEXT"
+            )
+        conn.execute(
+            """
+            UPDATE transcript_events
+            SET analytics_report = ?
+            WHERE session_id = ?
+            """,
+            (report_json, session_id),
+        )
+        updated = conn.total_changes
+        if updated == 0:
+            conn.execute(
+                """
+                INSERT INTO transcript_events
+                (session_id, transcript, call_state, analytics_report)
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, "[NO TRANSCRIPT]", "END_CALL", report_json),
+            )
         conn.commit()
 
 
@@ -176,6 +272,36 @@ async def _log_and_persist_transcript(
         transcript,
         call_state.value,
     )
+
+
+async def _activate_resilience_takeover(
+    websocket: WebSocket,
+    session_id: str,
+    reason: str,
+) -> None:
+    """Play fallback message once, then force AI mute for instant human takeover."""
+    session = call_service.get_session(session_id)
+    if session and session.fallback_triggered:
+        return
+    if session:
+        session.fallback_triggered = True
+
+    print(f"[Resilience] takeover session={session_id} reason={reason}")
+    await _stream_tts(websocket, FALLBACK_TECHNICAL_GLITCH_MESSAGE, "en")
+    muted = call_service.set_muted(session_id, True)
+    updated = call_service.get_session(session_id)
+    await websocket.send_json({
+        "type": "metadata",
+        "data": {
+            "session_id": session_id,
+            "is_user_speaking": False,
+            "detected_sentiment": "neutral",
+            "requires_confirmation": False,
+            "is_muted": muted,
+            "distress_level": updated.last_urgency if updated else 1,
+            "environment": "quiet",
+        },
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -231,9 +357,18 @@ async def ws_call(websocket: WebSocket):
             # ==============================================================
             elif msg_type == "audio_chunk" and session_id:
                 raw_b64 = msg.get("data", "")
-                result = await transcription_service.feed_chunk(
-                    session_id, raw_b64
-                )
+                try:
+                    result = await asyncio.wait_for(
+                        transcription_service.feed_chunk(session_id, raw_b64),
+                        timeout=API_GUARD_TIMEOUT_SECONDS,
+                    )
+                except Exception as exc:
+                    await _activate_resilience_takeover(
+                        websocket,
+                        session_id,
+                        f"Groq timeout/error: {exc}",
+                    )
+                    continue
 
                 # --- Acoustic analysis on every chunk ---
                 try:
@@ -279,6 +414,14 @@ async def ws_call(websocket: WebSocket):
                     })
 
                 # If the service returned a transcript, send it
+                if result and not result.skipped and not result.text:
+                    await _activate_resilience_takeover(
+                        websocket,
+                        session_id,
+                        "Groq returned empty transcript",
+                    )
+                    continue
+
                 if result and not result.skipped and result.text:
                     await websocket.send_json({
                         "type": "transcript",
@@ -293,9 +436,32 @@ async def ws_call(websocket: WebSocket):
                     # STATE: VERIFYING — binary confirmation only
                     # ==================================================
                     if current_state == CallState.VERIFYING:
-                        confirmation = await reasoning_service.check_confirmation(
-                            result.text
-                        )
+                        try:
+                            confirmation, _ = await asyncio.gather(
+                                asyncio.wait_for(
+                                    reasoning_service.check_confirmation(result.text),
+                                    timeout=API_GUARD_TIMEOUT_SECONDS,
+                                ),
+                                _log_and_persist_transcript(
+                                    session_id,
+                                    result.text,
+                                    current_state,
+                                ),
+                            )
+                        except Exception as exc:
+                            await _activate_resilience_takeover(
+                                websocket,
+                                session_id,
+                                f"Gemini confirmation timeout/error: {exc}",
+                            )
+                            continue
+                        if confirmation is None:
+                            await _activate_resilience_takeover(
+                                websocket,
+                                session_id,
+                                "Gemini confirmation failed",
+                            )
+                            continue
 
                         if confirmation and confirmation.confirmed:
                             # ✅ User confirmed → CONFIRMED
@@ -337,60 +503,82 @@ async def ws_call(websocket: WebSocket):
                     # STATE: LISTENING — full triage analysis
                     # ==================================================
                     elif current_state == CallState.LISTENING:
-                        reasoning, _ = await asyncio.gather(
-                            reasoning_service.analyze(result.text),
-                            _log_and_persist_transcript(
+                        try:
+                            reasoning, _ = await asyncio.gather(
+                                asyncio.wait_for(
+                                    reasoning_service.analyze(result.text),
+                                    timeout=API_GUARD_TIMEOUT_SECONDS,
+                                ),
+                                _log_and_persist_transcript(
+                                    session_id,
+                                    result.text,
+                                    current_state,
+                                ),
+                            )
+                        except Exception as exc:
+                            await _activate_resilience_takeover(
+                                websocket,
                                 session_id,
-                                result.text,
-                                current_state,
-                            ),
-                        )
-                        if reasoning:
-                            await websocket.send_json({
-                                "type": "reasoning_update",
-                                "data": reasoning.model_dump(),
-                            })
+                                f"Gemini reasoning timeout/error: {exc}",
+                            )
+                            continue
+                        if reasoning is None:
+                            await _activate_resilience_takeover(
+                                websocket,
+                                session_id,
+                                "Gemini reasoning failed",
+                            )
+                            continue
+                        await websocket.send_json({
+                            "type": "reasoning_update",
+                            "data": reasoning.model_dump(),
+                        })
 
                             # Propagate sentiment back as metadata
-                            await websocket.send_json({
-                                "type": "metadata",
-                                "data": {
-                                    "session_id": session_id,
-                                    "is_user_speaking": False,
-                                    "detected_sentiment": reasoning.sentiment,
-                                    "requires_confirmation": reasoning.needs_verification,
-                                    "is_muted": call_service.get_session(session_id).is_muted
-                                    if call_service.get_session(session_id)
-                                    else False,
-                                },
-                            })
+                        await websocket.send_json({
+                            "type": "metadata",
+                            "data": {
+                                "session_id": session_id,
+                                "is_user_speaking": False,
+                                "detected_sentiment": reasoning.sentiment,
+                                "requires_confirmation": reasoning.needs_verification,
+                                "is_muted": call_service.get_session(session_id).is_muted
+                                if call_service.get_session(session_id)
+                                else False,
+                            },
+                        })
 
                             # If needs_verification → transition to VERIFYING
-                            if reasoning.needs_verification:
-                                call_service.transition_to_verifying(
-                                    session_id,
-                                    restatement=reasoning.restatement,
-                                    language_code=reasoning.language_code,
-                                    intent=reasoning.intent,
-                                    urgency=reasoning.urgency_level,
-                                )
-                                await _emit_state(websocket, session_id, CallState.VERIFYING)
+                        if reasoning.needs_verification:
+                            call_service.transition_to_verifying(
+                                session_id,
+                                restatement=reasoning.restatement,
+                                language_code=reasoning.language_code,
+                                intent=reasoning.intent,
+                                urgency=reasoning.urgency_level,
+                            )
+                            await _emit_state(websocket, session_id, CallState.VERIFYING)
 
                             # TTS: speak the restatement
-                            if reasoning.restatement:
-                                transcription_service.clear_buffer(session_id)
-                                session = call_service.get_session(session_id)
-                                if not (session and session.is_muted):
-                                    await _stream_tts(
-                                        websocket,
-                                        reasoning.restatement,
-                                        reasoning.language_code,
-                                    )
+                        if reasoning.restatement:
+                            transcription_service.clear_buffer(session_id)
+                            session = call_service.get_session(session_id)
+                            if not (session and session.is_muted):
+                                await _stream_tts(
+                                    websocket,
+                                    reasoning.restatement,
+                                    reasoning.language_code,
+                                )
 
                     # ==================================================
                     # STATE: CONFIRMED — already confirmed, no new analysis
                     # ==================================================
                     elif current_state == CallState.CONFIRMED:
+                        await _log_and_persist_transcript(
+                            session_id,
+                            result.text,
+                            current_state,
+                        )
                         # Could handle follow-up questions here in the future
                         pass
 
@@ -418,6 +606,37 @@ async def ws_call(websocket: WebSocket):
             # ==============================================================
             elif msg_type == "end_call":
                 if session_id:
+                    timeline = await asyncio.to_thread(
+                        _read_session_transcript_timeline, session_id
+                    )
+                    report = None
+                    try:
+                        report = await asyncio.wait_for(
+                            analytics_service.post_mortem(timeline),
+                            timeout=API_GUARD_TIMEOUT_SECONDS,
+                        )
+                    except Exception as exc:
+                        print(f"[Analytics] post-mortem timeout/error: {exc}")
+
+                    if report:
+                        report_payload = report.model_dump()
+                    else:
+                        report_payload = {
+                            "understanding_score": 3,
+                            "cultural_accuracy": 3,
+                            "bottleneck_detected": "Analytics service unavailable during closeout",
+                            "coaching_tip": "Escalate to the operator earlier when AI response latency exceeds safe limits.",
+                        }
+                    await websocket.send_json({
+                        "type": "call_summary",
+                        "data": report_payload,
+                    })
+                    await asyncio.to_thread(
+                        _write_final_report,
+                        session_id,
+                        json.dumps(report_payload, ensure_ascii=False),
+                    )
+
                     transcription_service.end_session(session_id)
                     acoustic_service.end_session(session_id)
                     call_service.end_session(session_id)

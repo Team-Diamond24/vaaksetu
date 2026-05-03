@@ -43,6 +43,7 @@ class SessionState:
     last_intent: str = ""
     last_urgency: int = 1
     is_muted: bool = False
+    fallback_triggered: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,15 @@ class CallService:
         if not s:
             return False
         s.is_muted = not s.is_muted
+        print(f"[CallState] {session_id} mute={s.is_muted}")
+        return s.is_muted
+
+    def set_muted(self, session_id: str, muted: bool) -> bool:
+        """Set AI mute state for a session and return the resulting value."""
+        s = self._sessions.get(session_id)
+        if not s:
+            return False
+        s.is_muted = muted
         print(f"[CallState] {session_id} mute={s.is_muted}")
         return s.is_muted
 

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "@/lib/audio-utils";
-import type { AcousticData, CallMetadata, CallState, ClientMessage, ReasoningOutput, ServerMessage } from "@/types";
+import type {
+  AcousticData,
+  CallMetadata,
+  CallState,
+  ClientMessage,
+  PerformanceReport,
+  ReasoningOutput,
+  ServerMessage,
+} from "@/types";
 
 /* ------------------------------------------------------------------ */
 /*  Public state exposed by the hook                                   */
@@ -18,6 +26,7 @@ export interface VoiceClientState {
   transcript: string;
   reasoning: ReasoningOutput | null;
   acousticData: AcousticData | null;
+  callSummary: PerformanceReport | null;
 }
 
 export interface VoiceClientActions {
@@ -44,6 +53,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const [reasoning, setReasoning] = useState<ReasoningOutput | null>(null);
   const [callState, setCallState] = useState<CallState>("LISTENING");
   const [acousticData, setAcousticData] = useState<AcousticData | null>(null);
+  const [callSummary, setCallSummary] = useState<PerformanceReport | null>(null);
 
   /* ---- refs (never cause re-renders) ---- */
   const wsRef = useRef<WebSocket | null>(null);
@@ -285,6 +295,10 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
             setIsThinking(false);
             break;
 
+          case "call_summary":
+            setCallSummary(msg.data);
+            break;
+
           case "state_change":
             setCallState(msg.state);
             break;
@@ -308,6 +322,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   /* ---- start / stop ---- */
   const startCall = useCallback(async () => {
     setError(null);
+    setCallSummary(null);
 
     /* 1. Mic permission */
     let stream: MediaStream;
@@ -366,7 +381,10 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     };
     ws.onmessage = onWsMessage;
     ws.onerror = () => setError("WebSocket error");
-    ws.onclose = () => setIsConnected(false);
+    ws.onclose = () => {
+      setIsConnected(false);
+      wsRef.current = null;
+    };
 
     /* 7. Wire worklet → base64 → WS */
     worklet.port.onmessage = (e) => {
@@ -406,16 +424,11 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     audioCtxRef.current = null;
     analyserNode.current = null;
 
-    /* close WS */
-    wsRef.current?.close();
-    wsRef.current = null;
+    /* keep WS open until backend returns final summary/close */
 
     setIsRecording(false);
     setCallActive(false);
-    setIsConnected(false);
     setMetadata(null);
-    setTranscript("");
-    setReasoning(null);
     setCallState("LISTENING");
     setAcousticData(null);
     setIsAiMuted(false);
@@ -444,6 +457,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     transcript,
     reasoning,
     acousticData,
+    callSummary,
     startCall,
     stopCall,
     toggleTakeover,
