@@ -28,6 +28,8 @@ export type ClientMessage =
 /* ---------- server → client ---------- */
 export type ServerMessage =
   | { type: "audio_playback"; data: string }
+  | { type: "audio_chunk"; data: string }
+  | { type: "audio_done" }
   | { type: "interrupt" }
   | { type: "metadata"; data: CallMetadata }
   | { type: "transcript"; text: string; is_final: boolean }

@@ -9,6 +9,7 @@ export interface VoiceClientState {
   isConnected: boolean;
   isRecording: boolean;
   callActive: boolean;
+  isAiSpeaking: boolean;
   error: string | null;
   metadata: CallMetadata | null;
   transcript: string;
@@ -29,6 +30,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [callActive, setCallActive] = useState(false);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<CallMetadata | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -43,6 +45,11 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
   const playbackSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const sessionIdRef = useRef<string>("");
 
+  /* ---- TTS audio queue refs ---- */
+  const audioChunkQueue = useRef<string[]>([]);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsBlobUrlRef = useRef<string | null>(null);
+
   /* ---- helpers ---- */
   const send = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -50,17 +57,96 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     }
   }, []);
 
-  /** Barge-in: immediately kill any ongoing playback */
+  /** Clean up any active TTS Blob URL to prevent memory leaks */
+  const revokeTtsBlobUrl = useCallback(() => {
+    if (ttsBlobUrlRef.current) {
+      URL.revokeObjectURL(ttsBlobUrlRef.current);
+      ttsBlobUrlRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Barge-in: immediately kill ALL ongoing playback.
+   * Stops both legacy AudioBufferSourceNode playback and the new
+   * HTMLAudioElement-based TTS queue.
+   */
   const handleInterrupt = useCallback(() => {
+    // Stop legacy BufferSource playback
     try {
       playbackSourceRef.current?.stop();
     } catch {
       /* already stopped */
     }
     playbackSourceRef.current = null;
-  }, []);
 
-  /** Decode Base64 audio from backend and play it */
+    // Stop TTS HTMLAudioElement playback
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current.currentTime = 0;
+      ttsAudioRef.current.src = "";
+      ttsAudioRef.current = null;
+    }
+
+    // Clear pending audio chunks
+    audioChunkQueue.current = [];
+
+    // Clean up blob URL
+    revokeTtsBlobUrl();
+
+    setIsAiSpeaking(false);
+  }, [revokeTtsBlobUrl]);
+
+  /**
+   * Concatenate all queued Base64 chunks into a single MP3 blob,
+   * then play it via an HTMLAudioElement (most reliable for MP3).
+   */
+  const flushAndPlayTtsQueue = useCallback(() => {
+    const chunks = audioChunkQueue.current;
+    if (chunks.length === 0) return;
+
+    // Decode all Base64 chunks and concatenate into one ArrayBuffer
+    const buffers = chunks.map((b64) => base64ToArrayBuffer(b64));
+    const totalLength = buffers.reduce((acc, b) => acc + b.byteLength, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const buf of buffers) {
+      combined.set(new Uint8Array(buf), offset);
+      offset += buf.byteLength;
+    }
+
+    // Clear the queue
+    audioChunkQueue.current = [];
+
+    // Create Blob URL and play
+    revokeTtsBlobUrl();
+    const blob = new Blob([combined.buffer], { type: "audio/mpeg" });
+    const url = URL.createObjectURL(blob);
+    ttsBlobUrlRef.current = url;
+
+    const audio = new Audio(url);
+    ttsAudioRef.current = audio;
+    setIsAiSpeaking(true);
+
+    audio.onended = () => {
+      setIsAiSpeaking(false);
+      ttsAudioRef.current = null;
+      revokeTtsBlobUrl();
+    };
+
+    audio.onerror = () => {
+      console.error("[VoiceClient] TTS playback error");
+      setIsAiSpeaking(false);
+      ttsAudioRef.current = null;
+      revokeTtsBlobUrl();
+    };
+
+    audio.play().catch((e) => {
+      console.error("[VoiceClient] TTS autoplay blocked:", e);
+      setIsAiSpeaking(false);
+    });
+  }, [revokeTtsBlobUrl]);
+
+  /** Decode Base64 audio from backend and play it (legacy single-shot) */
   const playAudio = useCallback(async (b64: string) => {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
@@ -90,18 +176,37 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
           case "interrupt":
             handleInterrupt();
             break;
+
           case "audio_playback":
             playAudio(msg.data);
             break;
+
+          case "audio_chunk":
+            // Queue incoming TTS audio chunk
+            audioChunkQueue.current.push(msg.data);
+            break;
+
+          case "audio_done":
+            // All TTS chunks received — concatenate and play
+            flushAndPlayTtsQueue();
+            break;
+
           case "metadata":
             setMetadata(msg.data);
+            // Barge-in: if user starts speaking, stop AI audio
+            if (msg.data.is_user_speaking) {
+              handleInterrupt();
+            }
             break;
+
           case "transcript":
             setTranscript(msg.text);
             break;
+
           case "reasoning_update":
             setReasoning(msg.data);
             break;
+
           case "error":
             setError(msg.message);
             break;
@@ -110,7 +215,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
         console.warn("[VoiceClient] unparseable WS message");
       }
     },
-    [handleInterrupt, playAudio],
+    [handleInterrupt, playAudio, flushAndPlayTtsQueue],
   );
 
   /* ---- start / stop ---- */
@@ -200,7 +305,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
 
-    /* stop playback */
+    /* stop all playback (legacy + TTS) */
     handleInterrupt();
 
     /* close audio context */
@@ -227,6 +332,7 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     isConnected,
     isRecording,
     callActive,
+    isAiSpeaking,
     error,
     metadata,
     transcript,

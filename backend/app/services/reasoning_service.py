@@ -109,7 +109,7 @@ class ReasoningService:
 
     def __init__(self) -> None:
         self._client = genai.Client(api_key=settings.gemini_api_key)
-        self._model = "gemini-1.5-flash"
+        self._model = "gemini-2.5-flash"
 
     async def analyze(self, transcript: str) -> ReasoningOutput | None:
         """
@@ -126,7 +126,7 @@ class ReasoningService:
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
-                    response_json_schema=ReasoningOutput,
+                    response_json_schema=ReasoningOutput.model_json_schema(),
                     temperature=0.2,
                 ),
             )

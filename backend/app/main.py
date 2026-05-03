@@ -14,6 +14,7 @@ from app.models import CallMetadata
 from app.services.call_service import call_service
 from app.services.transcription_service import transcription_service
 from app.services.reasoning_service import reasoning_service
+from app.services.speech_service import speech_service
 from app.websockets.connection import manager
 
 
@@ -83,6 +84,8 @@ async def ws_call(websocket: WebSocket):
     Server messages:
       { type: "metadata",          data: CallMetadata }
       { type: "audio_playback",    data: "<base64>" }
+      { type: "audio_chunk",       data: "<base64 MP3 chunk>" }
+      { type: "audio_done" }
       { type: "interrupt" }
       { type: "transcript",        text, is_final }
       { type: "reasoning_update",  data: ReasoningOutput }
@@ -152,6 +155,26 @@ async def ws_call(websocket: WebSocket):
                                 "requires_confirmation": reasoning.needs_verification,
                             },
                         })
+
+                        # --- TTS pipeline: stream audio back ---
+                        if reasoning.restatement:
+                            try:
+                                async for b64_chunk in speech_service.synthesize(
+                                    reasoning.restatement,
+                                    reasoning.language_code,
+                                ):
+                                    await websocket.send_json({
+                                        "type": "audio_chunk",
+                                        "data": b64_chunk,
+                                    })
+                                # Notify frontend that all chunks have been sent
+                                await websocket.send_json({"type": "audio_done"})
+                            except Exception as tts_exc:
+                                print(f"[TTS] Speech synthesis error: {tts_exc}")
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": "Speech synthesis failed",
+                                })
 
             elif msg_type == "end_call":
                 if session_id:

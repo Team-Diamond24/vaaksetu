@@ -29,9 +29,11 @@ export function VoiceClient() {
     isConnected,
     isRecording,
     callActive,
+    isAiSpeaking,
     error,
     metadata,
     transcript,
+    reasoning,
     startCall,
     stopCall,
     analyserNode,
@@ -92,12 +94,22 @@ export function VoiceClient() {
               ? error
               : !callActive
                 ? "Ready"
-                : isConnected
-                  ? "Connected"
-                  : "Connecting…"}
+                : isAiSpeaking
+                  ? "AI Speaking…"
+                  : isConnected
+                    ? "Connected"
+                    : "Connecting…"}
           </span>
 
           {metadata && <SentimentBadge value={metadata.detected_sentiment} />}
+
+          {/* AI speaking pulse */}
+          {isAiSpeaking && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+              <span className="text-xs text-violet-400 font-medium">TTS</span>
+            </span>
+          )}
         </div>
 
         {/* ---- Transcript ---- */}
@@ -106,7 +118,16 @@ export function VoiceClient() {
             "{transcript}"
           </p>
         )}
+
+        {/* ---- AI Restatement ---- */}
+        {reasoning?.restatement && (
+          <div className="w-full rounded-xl bg-violet-500/10 border border-violet-500/20 px-4 py-3 text-center">
+            <p className="text-xs text-violet-400/70 font-medium mb-1">AI Response</p>
+            <p className="text-sm text-violet-200">{reasoning.restatement}</p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
