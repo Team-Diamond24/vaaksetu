@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -22,6 +22,7 @@ GREETING_TEXT = "Namaskara, 1092 Helpline. What is your emergency?"
 class CallState(str, Enum):
     GREETING = "GREETING"
     LISTENING = "LISTENING"
+    WAITING_FOR_LOCATION = "WAITING_FOR_LOCATION"
     VERIFYING = "VERIFYING"
     ASSURANCE = "ASSURANCE"
     ESCALATED = "ESCALATED"
@@ -32,11 +33,13 @@ class SessionState:
     session_id: str
     state: CallState = CallState.GREETING
     pre_escalation_state: CallState | None = None
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
     last_language_code: str = "en"
     last_restatement: str = ""
+    last_response_text: str = ""
     last_assurance: str = ""
     last_location: str | None = None
-    last_intent: str = "Inquiry"
+    last_intent: str | None = None
     last_urgency: int = 1
     last_distress_level: int = 1
     last_environment: str = "quiet"
@@ -47,7 +50,7 @@ class SessionState:
 
 
 class CallService:
-    """Handles call lifecycle, state transitions, cached greeting, and complaint logging."""
+    """Handles call lifecycle, conversation memory, and complaint logging."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, SessionState] = {}
@@ -104,6 +107,25 @@ class CallService:
     def get_session(self, session_id: str) -> SessionState | None:
         return self._sessions.get(session_id)
 
+    def append_user_turn(self, session_id: str, transcript: str) -> None:
+        session = self._sessions.get(session_id)
+        if not session or not transcript.strip():
+            return
+        session.conversation_history.append({"role": "user", "content": transcript.strip()})
+
+    def append_assistant_turn(self, session_id: str, text: str) -> None:
+        session = self._sessions.get(session_id)
+        if not session or not text.strip():
+            return
+        session.conversation_history.append({"role": "assistant", "content": text.strip()})
+        session.last_response_text = text.strip()
+
+    def get_conversation_history(self, session_id: str) -> list[dict[str, str]]:
+        session = self._sessions.get(session_id)
+        if not session:
+            return []
+        return list(session.conversation_history)
+
     def transition_to_greeting(self, session_id: str) -> None:
         session = self._sessions.get(session_id)
         if session:
@@ -116,12 +138,61 @@ class CallService:
             session.state = CallState.LISTENING
             session.pre_escalation_state = None
             session.last_restatement = ""
+            session.last_response_text = ""
             session.last_assurance = ""
             session.last_location = None
-            session.last_intent = "Inquiry"
-            session.last_urgency = 1
+            session.last_intent = session.last_intent
+            session.last_urgency = max(1, session.last_urgency)
             session.complaint_logged = False
             print(f"[CallState] {session_id} -> LISTENING")
+
+    def transition_to_waiting_for_location(self, session_id: str) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session.state = CallState.WAITING_FOR_LOCATION
+            session.pre_escalation_state = None
+            session.complaint_logged = False
+            print(f"[CallState] {session_id} -> WAITING_FOR_LOCATION")
+
+    def update_reasoning_context(
+        self,
+        session_id: str,
+        *,
+        language_code: str,
+        intent: str | None,
+        location: str | None,
+        urgency: int,
+        response_text: str,
+    ) -> None:
+        session = self._sessions.get(session_id)
+        if not session:
+            return
+        session.last_language_code = language_code or session.last_language_code
+        if intent:
+            session.last_intent = intent
+        if location:
+            session.last_location = location
+        session.last_urgency = max(1, min(5, urgency))
+        session.last_response_text = response_text
+
+    def update_listening_context(
+        self,
+        session_id: str,
+        *,
+        language_code: str,
+        intent: str | None,
+        location: str | None,
+        urgency: int,
+        response_text: str,
+    ) -> None:
+        self.update_reasoning_context(
+            session_id,
+            language_code=language_code,
+            intent=intent,
+            location=location,
+            urgency=urgency,
+            response_text=response_text,
+        )
 
     def transition_to_verifying(
         self,
@@ -129,7 +200,7 @@ class CallService:
         *,
         restatement: str,
         language_code: str,
-        intent: str,
+        intent: str | None,
         urgency: int,
         location: str | None,
     ) -> None:
@@ -137,9 +208,12 @@ class CallService:
         if session:
             session.state = CallState.VERIFYING
             session.last_restatement = restatement
+            session.last_response_text = restatement
             session.last_language_code = language_code or session.last_language_code
-            session.last_location = location
-            session.last_intent = intent or session.last_intent
+            if location:
+                session.last_location = location
+            if intent:
+                session.last_intent = intent
             session.last_urgency = max(1, min(5, urgency))
             session.last_assurance = ""
             session.complaint_logged = False
@@ -151,6 +225,7 @@ class CallService:
             return False
         session.state = CallState.ASSURANCE
         session.last_assurance = assurance_text
+        session.last_response_text = assurance_text
         print(f"[CallState] {session_id} -> ASSURANCE")
         return True
 
@@ -206,12 +281,20 @@ class CallService:
         if not session or session.complaint_logged or session.state != CallState.ASSURANCE:
             return None
 
+        complaint_text = session.last_restatement or session.last_response_text
         complaint = {
-            "id": str(uuid.uuid4()),
+            "session_id": session.session_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "location": session.last_location,
-            "issue": session.last_restatement,
+            "complaint_text": complaint_text,
+            "intent": session.last_intent,
             "urgency": session.last_urgency,
+            "distress_level": session.last_distress_level,
+            "language": session.last_language_code,
+            "acoustic_data": {
+                "environment": session.last_environment,
+                "loudness": session.last_loudness,
+            },
             "status": "Pending Dispatch",
         }
 

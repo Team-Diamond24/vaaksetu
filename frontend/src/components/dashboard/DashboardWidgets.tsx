@@ -21,16 +21,16 @@ export function VulnerabilityBanner({
   return (
     <div
       id="vulnerability-banner"
-      className="w-full rounded-2xl bg-rose-500/10 border-2 border-rose-500/40 px-6 py-4 flex items-center gap-4 animate-pulse"
+      className="w-full rounded-2xl bg-black/5 border border-black/20 px-6 py-4 flex items-center gap-4"
     >
-      <div className="flex-shrink-0 h-10 w-10 rounded-full bg-rose-500/20 flex items-center justify-center">
+      <div className="flex-shrink-0 h-10 w-10 rounded-full bg-black/10 flex items-center justify-center">
         <span className="text-xl">🚨</span>
       </div>
       <div className="flex-1">
-        <p className="text-sm font-bold text-rose-300 tracking-wide uppercase">
+        <p className="text-sm font-bold text-black tracking-wide uppercase">
           Vulnerability Alert
         </p>
-        <p className="text-xs text-rose-200/70 mt-0.5">
+        <p className="text-xs text-black/60 mt-0.5">
           {urgency >= 4 && "High urgency level detected. "}
           {isHighDistress && "Acoustic distress markers present. "}
           Immediate supervisor attention required.
@@ -40,7 +40,7 @@ export function VulnerabilityBanner({
         {[1, 2, 3].map((i) => (
           <span
             key={i}
-            className="h-2 w-2 rounded-full bg-rose-400 animate-ping"
+            className="h-2 w-2 rounded-full bg-black/40"
             style={{ animationDelay: `${i * 200}ms` }}
           />
         ))}
@@ -52,6 +52,7 @@ export function VulnerabilityBanner({
 const STATES: { key: CallState; label: string; emoji: string }[] = [
   { key: "GREETING", label: "Greeting", emoji: "👋" },
   { key: "LISTENING", label: "Listening", emoji: "🎧" },
+  { key: "WAITING_FOR_LOCATION", label: "Location", emoji: "📍" },
   { key: "VERIFYING", label: "Verifying", emoji: "🔍" },
   { key: "ASSURANCE", label: "Assurance", emoji: "✅" },
   { key: "ESCALATED", label: "Escalated", emoji: "🚨" },
@@ -74,10 +75,10 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
                 flex items-center justify-center h-9 w-9 rounded-full border-2 text-sm font-bold
                 transition-all duration-500 flex-shrink-0
                 ${isActive
-                  ? "border-cyan-400 bg-cyan-500/20 text-cyan-300 shadow-lg shadow-cyan-500/20 scale-110"
+                  ? "border-black bg-black text-white scale-110"
                   : isDone
-                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-400"
-                    : "border-white/10 bg-white/5 text-white/30"
+                    ? "border-black bg-black/10 text-black"
+                    : "border-black/10 bg-white text-black/40"
                 }
               `}
             >
@@ -87,10 +88,10 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
               className={`
                 ml-2 text-xs font-semibold tracking-wide whitespace-nowrap
                 ${isActive
-                  ? "text-cyan-300"
+                  ? "text-black"
                   : isDone
-                    ? "text-emerald-400/80"
-                    : "text-white/25"
+                    ? "text-black/70"
+                    : "text-black/40"
                 }
               `}
             >
@@ -101,10 +102,10 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
                 className={`
                   flex-1 h-0.5 mx-3 rounded-full transition-all duration-500
                   ${isDone
-                    ? "bg-emerald-500/50"
+                    ? "bg-black/40"
                     : isActive
-                      ? "bg-gradient-to-r from-cyan-500/50 to-white/5"
-                      : "bg-white/5"
+                      ? "bg-black/60"
+                      : "bg-black/10"
                   }
                 `}
               />
@@ -118,12 +119,12 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
 
 export function SentimentWidget({ value }: { value: string }) {
   const map: Record<string, { emoji: string; label: string; color: string }> = {
-    positive: { emoji: "😊", label: "Positive", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
-    neutral: { emoji: "😐", label: "Neutral", color: "text-zinc-400 bg-zinc-500/10 border-zinc-500/20" },
-    negative: { emoji: "😟", label: "Negative", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
-    fearful: { emoji: "😨", label: "Fearful", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
-    angry: { emoji: "😠", label: "Angry", color: "text-red-400 bg-red-500/10 border-red-500/20" },
-    distressed: { emoji: "😰", label: "Distressed", color: "text-orange-400 bg-orange-500/10 border-orange-500/20" },
+    positive: { emoji: "😊", label: "Positive", color: "text-black bg-white border-black/10" },
+    neutral: { emoji: "😐", label: "Neutral", color: "text-black/70 bg-white border-black/10" },
+    negative: { emoji: "😟", label: "Negative", color: "text-black bg-white border-black/10" },
+    fearful: { emoji: "😨", label: "Fearful", color: "text-black bg-white border-black/10" },
+    angry: { emoji: "😠", label: "Angry", color: "text-black bg-white border-black/10" },
+    distressed: { emoji: "😰", label: "Distressed", color: "text-black bg-white border-black/10" },
   };
   const s = map[value] ?? map.neutral;
 
@@ -154,19 +155,19 @@ export function UrgencyMeter({ level }: { level: number }) {
   return (
     <div
       id="urgency-meter"
-      className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/5 p-4"
+      className="flex flex-col gap-2 rounded-2xl border border-black/10 bg-white p-4"
     >
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/60">
+        <span className="text-[10px] uppercase tracking-widest font-bold text-black/50">
           Urgency
         </span>
         <span
           className={`text-xs font-bold ${
             level >= 4
-              ? "text-rose-400"
+              ? "text-black"
               : level >= 3
-                ? "text-amber-400"
-                : "text-emerald-400"
+                ? "text-black/80"
+                : "text-black/60"
           }`}
         >
           {level}/5
@@ -179,13 +180,13 @@ export function UrgencyMeter({ level }: { level: number }) {
             className={`
               flex-1 rounded-sm transition-all duration-500
               ${seg <= level
-                ? `${colors[seg - 1]} ${seg === level ? "shadow-lg" : ""}`
-                : "bg-white/5"
+                ? `bg-black ${seg === level ? "shadow-lg" : ""}`
+                : "bg-black/5"
               }
             `}
             style={
               seg <= level
-                ? { boxShadow: `0 0 8px ${seg >= 4 ? "rgba(244,63,94,.4)" : "transparent"}` }
+                ? { boxShadow: `0 0 8px rgba(0,0,0,0.25)` }
                 : undefined
             }
           />
@@ -218,15 +219,15 @@ export function LanguageRegionWidget({
   return (
     <div
       id="language-region-widget"
-      className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/5 p-4"
+      className="flex flex-col gap-2 rounded-2xl border border-black/10 bg-white p-4"
     >
-      <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/60">
+      <span className="text-[10px] uppercase tracking-widest font-bold text-black/50">
         Language & Intent
       </span>
       <div className="flex items-center gap-2">
         <span className="text-lg">🌐</span>
-        <span className="text-sm font-semibold text-white/90">{langName}</span>
-        <span className="text-[10px] font-mono text-muted-foreground bg-white/5 px-1.5 py-0.5 rounded">
+        <span className="text-sm font-semibold text-black">{langName}</span>
+        <span className="text-[10px] font-mono text-black/60 bg-black/5 px-1.5 py-0.5 rounded">
           {languageCode}
         </span>
       </div>
@@ -234,12 +235,12 @@ export function LanguageRegionWidget({
         <span className="text-lg">
           {intent === "Medical" ? "🏥" : intent === "Fire" ? "🔥" : intent === "Crime" ? "🚔" : "📋"}
         </span>
-        <span className="text-sm font-medium text-white/70">{intent}</span>
+        <span className="text-sm font-medium text-black/70">{intent}</span>
       </div>
       {reasoning?.location && (
         <div className="flex items-center gap-2 mt-1">
           <span className="text-lg">📍</span>
-          <span className="text-sm font-medium text-white/70">{reasoning.location}</span>
+          <span className="text-sm font-medium text-black/70">{reasoning.location}</span>
         </div>
       )}
     </div>
@@ -249,20 +250,20 @@ export function LanguageRegionWidget({
 export function AcousticWidget({ data }: { data: AcousticData | null }) {
   if (!data) {
     return (
-      <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/5 p-4">
-        <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/60">
+      <div className="flex flex-col gap-2 rounded-2xl border border-black/10 bg-white p-4">
+        <span className="text-[10px] uppercase tracking-widest font-bold text-black/50">
           Acoustic Analysis
         </span>
-        <span className="text-xs text-muted-foreground">Waiting for audio...</span>
+        <span className="text-xs text-black/50">Waiting for audio...</span>
       </div>
     );
   }
 
   const envConfig = {
-    quiet: { emoji: "🏠", label: "Quiet", color: "text-emerald-400" },
-    moderate: { emoji: "👥", label: "Moderate", color: "text-amber-400" },
-    noisy: { emoji: "🚗", label: "Noisy", color: "text-orange-400" },
-    chaotic: { emoji: "🚨", label: "Chaotic", color: "text-rose-400" },
+    quiet: { emoji: "🏠", label: "Quiet", color: "text-black" },
+    moderate: { emoji: "👥", label: "Moderate", color: "text-black" },
+    noisy: { emoji: "🚗", label: "Noisy", color: "text-black" },
+    chaotic: { emoji: "🚨", label: "Chaotic", color: "text-black" },
   };
   const env = envConfig[data.environment] ?? envConfig.quiet;
 
@@ -279,16 +280,16 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
       id="acoustic-widget"
       className={`flex flex-col gap-3 rounded-2xl border p-4 transition-all duration-300 ${
         data.is_high_distress
-          ? "border-rose-500/40 bg-rose-500/5"
-          : "border-white/10 bg-white/5"
+          ? "border-black/30 bg-black/5"
+          : "border-black/10 bg-white"
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/60">
+        <span className="text-[10px] uppercase tracking-widest font-bold text-black/50">
           Acoustic Analysis
         </span>
         {data.is_high_distress && (
-          <span className="text-[10px] font-bold text-rose-400 animate-pulse">
+          <span className="text-[10px] font-bold text-black">
             HIGH DISTRESS
           </span>
         )}
@@ -309,15 +310,15 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
               <div
                 key={b}
                 className={`w-1 rounded-t-sm transition-all ${
-                  b <= loud.bars ? "bg-cyan-400" : "bg-white/10"
+                  b <= loud.bars ? "bg-black" : "bg-black/10"
                 }`}
                 style={{ height: `${b * 25}%` }}
               />
             ))}
           </div>
           <div>
-            <p className="text-[10px] text-muted-foreground/60 uppercase">Volume</p>
-            <p className="text-xs font-semibold text-white/80">{loud.label}</p>
+            <p className="text-[10px] text-black/50 uppercase">Volume</p>
+            <p className="text-xs font-semibold text-black/80">{loud.label}</p>
           </div>
         </div>
       </div>
@@ -339,7 +340,7 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
     >
       {entries.length === 0 && (
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-sm text-muted-foreground/40 italic">
+          <p className="text-sm text-black/40 italic">
             Call transcript will appear here...
           </p>
         </div>
@@ -354,8 +355,8 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
             className={`
               max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed
               ${entry.sender === "citizen"
-                ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-100 rounded-bl-md"
-                : "bg-violet-500/10 border border-violet-500/20 text-violet-100 rounded-br-md"
+                ? "bg-black text-white border border-black rounded-bl-md"
+                : "bg-white text-black border border-black/10 rounded-br-md"
               }
             `}
           >
@@ -363,7 +364,7 @@ export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
               <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">
                 {entry.sender === "citizen" ? "👤 Citizen" : "🤖 VaakSetu AI"}
               </span>
-              <span className="text-[9px] text-muted-foreground/40 font-mono">
+              <span className="text-[9px] text-black/40 font-mono">
                 {entry.timestamp.toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",

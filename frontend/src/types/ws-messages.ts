@@ -1,9 +1,14 @@
 import type { CallMetadata } from "./call-metadata";
 
 export interface ReasoningOutput {
-  restatement: string;
+  detected_language: string;
+  is_complete: boolean;
+  is_complete_complaint: boolean;
+  response_text: string;
+  missing_info_question: string | null;
+  restatement: string | null;
   location: string | null;
-  intent: string;
+  intent: string | null;
   urgency_level: number;
   sentiment: string;
   needs_verification: boolean;
@@ -13,6 +18,7 @@ export interface ReasoningOutput {
 export type CallState =
   | "GREETING"
   | "LISTENING"
+  | "WAITING_FOR_LOCATION"
   | "VERIFYING"
   | "ASSURANCE"
   | "ESCALATED";

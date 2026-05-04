@@ -13,22 +13,31 @@ import {
 } from "@/components/ui/table";
 
 export interface ComplaintRecord {
-  id: string;
+  id?: string;
+  session_id?: string;
   timestamp: string;
   location: string | null;
-  issue: string;
+  complaint_text?: string;
+  issue?: string;
   urgency: number;
-  status: string;
+  status?: string;
+  intent?: string | null;
+  distress_level?: number;
+  language?: string;
+  acoustic_data?: {
+    environment: string;
+    loudness: string;
+  };
 }
 
 function urgencyClass(urgency: number) {
   if (urgency >= 5) {
-    return "bg-rose-500/15 text-rose-300 border-rose-500/30";
+    return "bg-black text-white border-black";
   }
   if (urgency >= 3) {
-    return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+    return "bg-black/80 text-white border-black";
   }
-  return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+  return "bg-black/60 text-white border-black";
 }
 
 export function ComplaintsTable() {
@@ -63,18 +72,18 @@ export function ComplaintsTable() {
   }, [fetchComplaints]);
 
   return (
-    <Card className="border-white/10 bg-white/[0.02]">
+    <Card className="border-black/10 bg-white">
       <CardContent className="p-0">
-        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Records Dashboard</h2>
-            <p className="text-xs text-muted-foreground">
+        <div className="px-6 py-4 border-b border-black/10 flex items-center justify-between">
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold text-black">Records</h2>
+            <p className="text-xs text-black/60">
               Confirmed complaints pending dispatch
             </p>
           </div>
           <Button
             variant="ghost"
-            className="gap-2 cursor-pointer border border-white/10"
+            className="gap-2 cursor-pointer border border-black/15 text-black hover:text-black"
             onClick={() => void fetchComplaints()}
             disabled={loading}
           >
@@ -84,7 +93,7 @@ export function ComplaintsTable() {
         </div>
 
         {error && (
-          <div className="px-6 py-4 text-sm text-rose-300 bg-rose-500/10 border-b border-rose-500/10">
+          <div className="px-6 py-4 text-sm text-black bg-black/5 border-b border-black/10">
             {error}
           </div>
         )}
@@ -93,36 +102,68 @@ export function ComplaintsTable() {
           <TableHeader>
             <TableRow>
               <TableHead>Timestamp</TableHead>
+              <TableHead>Session</TableHead>
               <TableHead>Location</TableHead>
               <TableHead>Issue</TableHead>
+              <TableHead>Intent</TableHead>
               <TableHead>Urgency</TableHead>
+              <TableHead>Distress</TableHead>
+              <TableHead>Language</TableHead>
+              <TableHead>Environment</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {!loading && records.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                <TableCell colSpan={10} className="text-center text-black/60 py-10">
                   No confirmed complaints yet.
                 </TableCell>
               </TableRow>
             )}
 
-            {records.map((record) => (
-              <TableRow key={record.id}>
-                <TableCell className="whitespace-nowrap text-muted-foreground">
+            {records.map((record, index) => (
+              <TableRow
+                key={
+                  record.id ||
+                  record.session_id ||
+                  `${record.timestamp}-${record.complaint_text || record.issue}-${index}`
+                }
+              >
+                <TableCell className="whitespace-nowrap text-black/70">
                   {new Date(record.timestamp).toLocaleString()}
                 </TableCell>
+                <TableCell className="text-black/60">
+                  {record.session_id || "—"}
+                </TableCell>
                 <TableCell>{record.location || "Unknown"}</TableCell>
-                <TableCell className="max-w-[440px]">{record.issue}</TableCell>
+                <TableCell className="max-w-[360px] text-black">
+                  {record.complaint_text || record.issue || "—"}
+                </TableCell>
+                <TableCell className="text-black">
+                  {record.intent || "—"}
+                </TableCell>
                 <TableCell>
                   <Badge className={urgencyClass(record.urgency)}>
                     {record.urgency}/5
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge className="bg-cyan-500/15 text-cyan-300 border-cyan-500/30">
-                    {record.status}
+                  <Badge className="bg-black/10 text-black border-black/20">
+                    {record.distress_level ?? "—"}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-black">
+                  {record.language || "—"}
+                </TableCell>
+                <TableCell className="text-black">
+                  {record.acoustic_data
+                    ? `${record.acoustic_data.environment} · ${record.acoustic_data.loudness}`
+                    : "—"}
+                </TableCell>
+                <TableCell>
+                  <Badge className="bg-black text-white border-black">
+                    {record.status || "Pending Dispatch"}
                   </Badge>
                 </TableCell>
               </TableRow>

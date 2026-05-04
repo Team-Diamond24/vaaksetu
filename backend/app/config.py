@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
     groq_api_key: str = ""
-    gemini_api_key: str = ""
 
     # VAD
     vad_energy_threshold: int = 2500

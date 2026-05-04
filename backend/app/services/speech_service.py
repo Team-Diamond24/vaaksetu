@@ -1,98 +1,45 @@
 """
-Speech service — Empathetic TTS powered by Edge-TTS (Microsoft Neural Voices).
-
-Maps language_code from the ReasoningService to high-quality neural voices:
-  - kn  → kn-IN-SapnaNeural   (Kannada, female, calm)
-  - hi  → hi-IN-SwaraNeural   (Hindi, female, calm)
-  - en  → en-IN-NeerjaNeural  (Indian English, female, calm)
-
-Audio is streamed as Base64-encoded MP3 chunks — never written to disk.
+Resilient multilingual TTS service backed by Edge-TTS.
 """
 
 from __future__ import annotations
 
 import base64
 import io
+import re
 
 import edge_tts
 
-from app.config import settings  # noqa: F401 — available for future config
-
-# ---------------------------------------------------------------------------
-# Voice mapping
-# ---------------------------------------------------------------------------
-
-# Neural voice IDs keyed by ISO 639-1 language code.
-# All chosen for calm, empathetic tone suitable for an emergency helpline.
-VOICE_MAP: dict[str, str] = {
-    "kn": "kn-IN-SapnaNeural",
-    "hi": "hi-IN-SwaraNeural",
-    "en": "en-IN-NeerjaNeural",
-    "ta": "ta-IN-PallaviNeural",
-    "te": "te-IN-ShrutiNeural",
-    "mr": "mr-IN-AarohiNeural",
-}
 
 DEFAULT_VOICE = "en-IN-NeerjaNeural"
-
-# Chunk size (bytes) for streaming over WebSocket.
-# ~4 KB lowers first-byte latency while keeping overhead manageable.
 STREAM_CHUNK_SIZE = 4096
 
 
-# ---------------------------------------------------------------------------
-# Service
-# ---------------------------------------------------------------------------
-
 class SpeechService:
-    """
-    Converts text to speech using Microsoft Edge-TTS neural voices.
+    def _resolve_voice(self, lang_code: str) -> str:
+        voice_map = {
+            "en": "en-IN-NeerjaNeural",
+            "hi": "hi-IN-SwaraNeural",
+            "kn": "kn-IN-SapnaNeural",
+        }
+        return voice_map.get((lang_code or "en").lower().strip(), DEFAULT_VOICE)
 
-    Usage::
+    def _needs_english_fallback(self, text: str, lang_code: str) -> bool:
+        normalized_lang = (lang_code or "en").lower().strip()
+        if normalized_lang not in {"hi", "kn"}:
+            return False
+        return re.fullmatch(r"[A-Za-z0-9\s.,!?'\-:;()]+", text.strip()) is not None
 
-        async for b64_chunk in speech_service.synthesize(text, "kn"):
-            await ws.send_json({"type": "audio_chunk", "data": b64_chunk})
-    """
-
-    def _resolve_voice(self, language_code: str) -> str:
-        """Pick the best neural voice for the given language code."""
-        code = (language_code or "en").lower().strip()
-        return VOICE_MAP.get(code, DEFAULT_VOICE)
-
-    def _resolve_prosody(self, voice: str) -> tuple[str, str]:
-        """Use a faster, more urgent delivery for the helpline voices."""
-        if voice == "en-IN-NeerjaNeural":
-            return "+15%", "+0Hz"
-        return "+10%", "+0Hz"
-
-    async def synthesize(
-        self, text: str, language_code: str = "en"
-    ):
-        """
-        Async generator — yields Base64-encoded MP3 byte chunks.
-
-        The caller can stream each chunk to the frontend immediately,
-        enabling low-latency playback while the rest of the audio is
-        still being generated.
-        """
-        if not text or not text.strip():
-            return
-
-        voice = self._resolve_voice(language_code)
-        rate, pitch = self._resolve_prosody(voice)
-        print(f"[SpeechService] Synthesizing with voice={voice} lang={language_code}")
-
+    async def _stream_with_voice(self, text: str, voice: str):
         communicate = edge_tts.Communicate(
             text=text,
             voice=voice,
-            rate=rate,
-            pitch=pitch,
+            rate="+10%",
+            pitch="+0Hz",
             volume="+0%",
         )
 
-        # Stream audio bytes with small buffering for low latency.
         pending = bytearray()
-
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 pending.extend(chunk["data"])
@@ -101,51 +48,77 @@ class SpeechService:
                     del pending[:STREAM_CHUNK_SIZE]
                     yield base64.b64encode(data).decode("ascii")
 
-        # Flush any remaining bytes
         if pending:
             yield base64.b64encode(bytes(pending)).decode("ascii")
 
-    async def synthesize_full(
-        self, text: str, language_code: str = "en"
-    ) -> str | None:
-        """
-        Generate the *entire* audio as a single Base64 string.
+    async def _synthesize_full_with_voice(self, text: str, voice: str) -> str | None:
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=voice,
+            rate="+10%",
+            pitch="+0Hz",
+            volume="+0%",
+        )
 
-        Useful for short confirmations where streaming is unnecessary.
-        Returns ``None`` if synthesis fails.
-        """
+        audio_buffer = io.BytesIO()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_buffer.write(chunk["data"])
+
+        if audio_buffer.tell() == 0:
+            return None
+        audio_buffer.seek(0)
+        return base64.b64encode(audio_buffer.read()).decode("ascii")
+
+    async def synthesize(self, text: str, language_code: str = "en"):
+        if not text or not text.strip():
+            return
+
+        voice = self._resolve_voice(language_code)
+        if self._needs_english_fallback(text, language_code):
+            print(
+                f"[SpeechService] Romanized text detected for lang={language_code}, "
+                f"falling back to {DEFAULT_VOICE}: {text}"
+            )
+            voice = DEFAULT_VOICE
+
+        print(f"[SpeechService] Synthesizing with voice={voice} lang={language_code} text={text}")
+        try:
+            async for chunk in self._stream_with_voice(text, voice):
+                yield chunk
+        except Exception as exc:
+            print(f"[SpeechService] Edge-TTS primary voice error: {exc}")
+            if voice == DEFAULT_VOICE:
+                raise
+            print(f"[SpeechService] Falling back to {DEFAULT_VOICE} for text={text}")
+            async for chunk in self._stream_with_voice(text, DEFAULT_VOICE):
+                yield chunk
+
+    async def synthesize_full(self, text: str, language_code: str = "en") -> str | None:
         if not text or not text.strip():
             return None
 
         voice = self._resolve_voice(language_code)
-        rate, pitch = self._resolve_prosody(voice)
-
-        try:
-            communicate = edge_tts.Communicate(
-                text=text,
-                voice=voice,
-                rate=rate,
-                pitch=pitch,
-                volume="+0%",
+        if self._needs_english_fallback(text, language_code):
+            print(
+                f"[SpeechService] Romanized text detected for lang={language_code}, "
+                f"falling back to {DEFAULT_VOICE}: {text}"
             )
+            voice = DEFAULT_VOICE
 
-            audio_buffer = io.BytesIO()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    audio_buffer.write(chunk["data"])
-
-            if audio_buffer.tell() == 0:
+        print(f"[SpeechService] Synthesizing full with voice={voice} lang={language_code} text={text}")
+        try:
+            return await self._synthesize_full_with_voice(text, voice)
+        except Exception as exc:
+            print(f"[SpeechService] Edge-TTS primary voice error: {exc}")
+            if voice == DEFAULT_VOICE:
+                return None
+            try:
+                print(f"[SpeechService] Falling back to {DEFAULT_VOICE} for text={text}")
+                return await self._synthesize_full_with_voice(text, DEFAULT_VOICE)
+            except Exception as fallback_exc:
+                print(f"[SpeechService] Edge-TTS fallback voice error: {fallback_exc}")
                 return None
 
-            audio_buffer.seek(0)
-            return base64.b64encode(audio_buffer.read()).decode("ascii")
 
-        except Exception as exc:
-            print(f"[SpeechService] Edge-TTS error: {exc}")
-            return None
-
-
-# ---------------------------------------------------------------------------
-# Singleton
-# ---------------------------------------------------------------------------
 speech_service = SpeechService()

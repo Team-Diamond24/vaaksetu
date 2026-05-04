@@ -66,7 +66,7 @@ The goal is simple: **understand correctly, verify safely, respond faster.**
 | Layer | Technologies |
 |---|---|
 | Frontend | React 19, Vite, TypeScript, Shadcn UI, Lucide, Tailwind, Web Audio API, WebSocket streaming |
-| Backend | FastAPI, Uvicorn, Groq Whisper (STT), Gemini Flash via OpenRouter (reasoning + analytics), Edge-TTS, SQLite, Pydantic |
+| Backend | FastAPI, Uvicorn, Groq Whisper (STT), Groq LLM reasoning + analytics, Edge-TTS, SQLite, Pydantic |
 
 ---
 
@@ -78,7 +78,7 @@ flowchart TD
     B --> C[WebSocket audio_chunk]
     C --> D[Groq STT + VAD]
     D --> E[Acoustic & Cultural Analysis]
-    E --> F[Gemini Reasoning]
+    E --> F[Groq Reasoning]
     F --> G{Verification Needed?}
     G -- Yes --> H[AI Restatement/TTS]
     G -- No --> I[Direct Action/Human Takeover]
@@ -89,7 +89,7 @@ flowchart TD
     L --> M[SQLite Persistence]
 ```
 
-Text flow: **Citizen -> Groq STT -> Cultural + Acoustic Analysis -> Gemini Reasoning -> Verification -> Edge-TTS -> Citizen**, with resilience short-circuits and human takeover at any point.
+Text flow: **Citizen -> Groq STT -> Cultural + Acoustic Analysis -> Groq Reasoning -> Verification -> Edge-TTS -> Citizen**, with resilience short-circuits and human takeover at any point.
 
 ---
 
@@ -177,7 +177,6 @@ Backend (`backend/.env`):
 | `APP_HOST` | No | Backend host binding |
 | `APP_PORT` | No | Backend port |
 | `GROQ_API_KEY` | Yes | Groq Whisper transcription |
-| `OPENROUTER_API_KEY` | Yes | Gemini Flash reasoning + analytics via OpenRouter |
 | `OPENAI_API_KEY` | Optional | Reserved/compat use |
 | `DEEPGRAM_API_KEY` | Optional | Reserved/compat use |
 | `ELEVENLABS_API_KEY` | Optional | Reserved/compat use |
@@ -192,8 +191,6 @@ Frontend (`frontend/.env`):
 |---|---|---|
 | `VITE_API_BASE_URL` | Yes | REST base URL |
 | `VITE_WS_BASE_URL` | Yes | WebSocket base URL |
-
-> Note: `GEMINI_API_KEY` may appear in legacy env examples; current runtime wiring uses `OPENROUTER_API_KEY`.
 
 ---
 

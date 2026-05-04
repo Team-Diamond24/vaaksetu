@@ -8,7 +8,7 @@ VaakSetu is a real-time AI-assisted emergency call system for the 1092 helpline 
 ### Backend (Python/FastAPI)
 - **Real-time WebSocket** audio streaming
 - **Groq Whisper** for speech-to-text (16kHz PCM → text)
-- **Gemini Flash** (currently via direct API) for reasoning
+- **Groq LLM** for reasoning
 - **Edge-TTS** for multilingual text-to-speech
 - **SQLite** for analytics persistence
 
@@ -19,12 +19,12 @@ VaakSetu is a real-time AI-assisted emergency call system for the 1092 helpline 
 
 ### Key Services
 1. **transcription_service.py** - Energy-based VAD + Groq Whisper STT
-2. **reasoning_service.py** - LLM-based triage analysis (NEEDS REFACTORING)
+2. **reasoning_service.py** - LLM-based triage analysis
 3. **speech_service.py** - Edge-TTS multilingual synthesis
 4. **acoustic_service.py** - Real-time DSP (RMS, ZCR, distress scoring)
 5. **cultural_service.py** - Dialect-aware RAG with 25+ regional slang terms
-6. **call_service.py** - State machine for call lifecycle (NEEDS REFACTORING)
-7. **analytics_service.py** - Post-call performance reports (NEEDS REFACTORING)
+6. **call_service.py** - State machine for call lifecycle
+7. **analytics_service.py** - Post-call performance reports
 
 ### Current Call States
 - **LISTENING** - AI actively listening, will do full triage
@@ -41,54 +41,7 @@ VaakSetu is a real-time AI-assisted emergency call system for the 1092 helpline 
 
 ## REQUIRED REFACTORING
 
-### 1. Switch to OpenRouter with Gemma 3
-**Current:** Using Gemini Flash via direct API
-**Target:** OpenRouter with `google/gemma-3-27b-it:free`
-
-**Files to modify:**
-- `backend/app/services/reasoning_service.py` - Complete rewrite
-- `backend/app/services/analytics_service.py` - Update to use OpenRouter
-- `backend/app/config.py` - Add OPENROUTER_API_KEY
-- `backend/.env` - Add OPENROUTER_API_KEY value
-- `backend/requirements.txt` - Ensure `openai>=1.61.0` is present
-
-**Implementation:**
-```python
-from openai import AsyncOpenAI
-
-client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=settings.openrouter_api_key,
-)
-
-response = await client.chat.completions.create(
-    model="google/gemma-3-27b-it:free",
-    messages=[...],
-    temperature=0.2,
-    max_tokens=300,
-)
-```
-
-### 2. Token Optimization
-**Critical:** Gemma 3 must output STRICT JSON with:
-- NO markdown code blocks (```json)
-- NO conversational filler
-- MINIMAL system prompts
-- Compact field names
-
-**New JSON Contract:**
-```json
-{
-  "restatement": "string",
-  "location": "string or null",
-  "intent": "Medical|Fire|Crime|Inquiry",
-  "urgency": 1-5,
-  "needs_verification": boolean,
-  "language": "en|hi|kn"
-}
-```
-
-### 3. Enforce Strict Call Flow
+### 1. Enforce Strict Call Flow
 **New State Machine:** GREETING → LISTENING → VERIFYING → ASSURANCE → ESCALATED
 
 **State Definitions:**
@@ -103,7 +56,7 @@ response = await client.chat.completions.create(
 - `backend/app/main.py` - Update WebSocket handler for new flow
 - `frontend/src/types/ws-messages.ts` - Add new states to CallState type
 
-### 4. Complaint Logging
+### 2. Complaint Logging
 **New Feature:** Save confirmed complaints to JSON file
 
 **Implementation:**
@@ -129,7 +82,7 @@ response = await client.chat.completions.create(
 }
 ```
 
-### 5. System Prompt Optimization
+### 3. System Prompt Optimization
 **Current:** Verbose multi-paragraph prompts
 **Target:** Ultra-compact, token-efficient prompts
 
@@ -169,9 +122,7 @@ vaaksetu/
 ```
 
 ## API Keys Required
-- ✅ **GROQ_API_KEY** - Already configured (Whisper STT)
-- ✅ **GEMINI_API_KEY** - Already configured (will be replaced)
-- ❌ **OPENROUTER_API_KEY** - NEEDS TO BE ADDED
+- ✅ **GROQ_API_KEY** - Already configured (Whisper STT + LLM reasoning)
 
 ## Existing Features to Preserve
 1. ✅ Dialect-aware RAG (cultural_service.py)
@@ -189,19 +140,16 @@ vaaksetu/
 - [ ] Confirmation flow works (Yes/No detection)
 - [ ] Assurance message includes location
 - [ ] Complaint logged to complaints.json on confirmation
-- [ ] Token usage reduced (check OpenRouter dashboard)
 - [ ] All existing features still work
 - [ ] No markdown in LLM responses
 - [ ] State transitions: GREETING → LISTENING → VERIFYING → ASSURANCE
 
 ## Priority Order
-1. **HIGH** - Switch reasoning_service.py to OpenRouter + Gemma 3
-2. **HIGH** - Update call_service.py with new states (GREETING, ASSURANCE)
-3. **HIGH** - Implement complaint logging
-4. **MEDIUM** - Update main.py WebSocket handler for new flow
-5. **MEDIUM** - Optimize system prompts for token efficiency
-6. **LOW** - Update analytics_service.py to use OpenRouter
-7. **LOW** - Update frontend types for new states
+1. **HIGH** - Update call_service.py with new states (GREETING, ASSURANCE)
+2. **HIGH** - Implement complaint logging
+3. **MEDIUM** - Update main.py WebSocket handler for new flow
+4. **MEDIUM** - Optimize system prompts for token efficiency
+5. **LOW** - Update frontend types for new states
 
 ## Notes
 - Current VAD threshold: 2500 (works well, don't change)
@@ -210,28 +158,8 @@ vaaksetu/
 - Database: SQLite (keep as is)
 - WebSocket endpoint: /ws/call (keep as is)
 
-## Example OpenRouter Call (Token-Optimized)
-```python
-response = await client.chat.completions.create(
-    model="google/gemma-3-27b-it:free",
-    messages=[
-        {
-            "role": "system",
-            "content": "1092 triage. Extract: intent, urgency(1-5), location, restatement. Output JSON only."
-        },
-        {
-            "role": "user",
-            "content": f"Transcript: {text}\nContext: {cultural}\nAcoustic: distress={d}, env={e}"
-        }
-    ],
-    temperature=0.2,
-    max_tokens=200,  # Keep low to save tokens
-)
-```
-
 ## Success Criteria
-- ✅ OpenRouter API calls working
-- ✅ Token usage < 500 tokens per call
+- ✅ Groq LLM reasoning working
 - ✅ Complaint logging functional
 - ✅ New call flow enforced
 - ✅ All existing features preserved

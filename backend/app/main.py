@@ -13,6 +13,7 @@ import json
 import re
 import sqlite3
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -29,9 +30,19 @@ from app.services.speech_service import speech_service
 from app.services.transcription_service import transcription_service
 from app.websockets.connection import manager
 
+logger = logging.getLogger(__name__)
 
-VERIFY_PROMPT = "Please say Yes or No to confirm."
-DENIED_MESSAGE = "I did not get that correctly. Please repeat the emergency details."
+
+VERIFY_PROMPTS = {
+    "en": "Please say Yes or No to confirm.",
+    "hi": "\u0926\u092f\u093e \u0915\u0930\u0915\u0947 \u0939\u093e\u0901 \u092f\u093e \u0928\u0939\u0940\u0902 \u0915\u0939\u0915\u0930 \u092a\u0941\u0937\u094d\u091f\u093f \u0915\u0930\u0947\u0902.",
+    "kn": "\u0ca6\u0caf\u0cb5\u0cbf\u0c9f\u0ccd\u0c9f\u0cc1 \u0cb9\u0ccc\u0ca6\u0cc1 \u0c85\u0ca5\u0cb5\u0cbe \u0c87\u0cb2\u0ccd\u0cb2 \u0c8e\u0c82\u0ca6\u0cc1 \u0cb9\u0cc7\u0cb3\u0abf \u0ca6\u0cc3\u0ca2\u0ac0\u0c95\u0cb0\u0cbf\u0cb8\u0abf.",
+}
+DENIED_MESSAGES = {
+    "en": "I did not get that correctly. Please repeat the emergency details.",
+    "hi": "\u092e\u0941\u091d\u0947 \u092f\u0939 \u0938\u0939\u0940 \u0938\u0947 \u0938\u092e\u091d \u0928\u0939\u0940\u0902 \u0906\u092f\u093e. \u0915\u0943\u092a\u092f\u093e \u0906\u092a\u093e\u0924 \u0938\u094d\u0925\u093f\u0924\u093f \u0915\u0947 \u0935\u093f\u0935\u0930\u0923 \u092b\u093f\u0930 \u0938\u0947 \u092c\u0924\u093e\u090f\u0902.",
+    "kn": "\u0ca8\u0ca8\u0c97\u0cc6 \u0c87\u0ca6\u0cc1 \u0cb8\u0cb0\u0abf\u0caf\u0cbe\u0c97\u0abf \u0c85\u0cb0\u0ccd\u0ca5\u0cb5\u0cbe\u0c97\u0cb2\u0abf\u0cb2\u0ccd\u0cb2. \u0ca6\u0caf\u0cb5\u0cbf\u0c9f\u0ccd\u0c9f\u0cc1 \u0ca4\u0cc1\u0cb0\u0ccd\u0ca4\u0cc1 \u0cb8\u0cae\u0cb8\u0ccd\u0caf\u0cc6\u0caf \u0cb5\u0cbf\u0cb5\u0cb0\u0ca8\u0ccd\u0ca8\u0cc1 \u0cae\u0ca4\u0ccd\u0ca4\u0cca\u0cae\u0ccd\u0cae\u0cc6 \u0cb9\u0cc7\u0cb3\u0abf.",
+}
 FALLBACK_TECHNICAL_GLITCH_MESSAGE = (
     "I am experiencing a technical glitch, connecting you to an operator immediately."
 )
@@ -135,8 +146,26 @@ async def _stream_tts(websocket: WebSocket, text: str, lang: str) -> None:
                 return
         await _safe_send_json(websocket, {"type": "audio_done"})
     except Exception as exc:
-        print(f"[TTS] Speech synthesis error: {exc}")
+        logger.exception("[TTS] Speech synthesis error")
         await _safe_send_json(websocket, {"type": "error", "message": "Speech synthesis failed"})
+
+
+async def _speak_and_record(
+    websocket: WebSocket,
+    session_id: str,
+    text: str,
+    lang: str,
+    *,
+    prebuilt_audio: str | None = None,
+) -> None:
+    if not text or not text.strip():
+        return
+    call_service.append_assistant_turn(session_id, text)
+    if prebuilt_audio:
+        if await _safe_send_json(websocket, {"type": "audio_chunk", "data": prebuilt_audio}):
+            await _safe_send_json(websocket, {"type": "audio_done"})
+        return
+    await _stream_tts(websocket, text, lang)
 
 
 async def _emit_state(websocket: WebSocket, session_id: str, state: CallState) -> None:
@@ -155,7 +184,7 @@ async def _safe_send_json(websocket: WebSocket, payload: dict) -> bool:
         await websocket.send_json(payload)
         return True
     except RuntimeError as exc:
-        print(f"[WebSocket] send skipped: {exc}")
+        logger.warning("[WebSocket] send skipped: %s", exc)
         return False
     except WebSocketDisconnect:
         return False
@@ -290,6 +319,14 @@ def _sentiment_from_distress(distress_level: int) -> str:
     return "neutral"
 
 
+def _localized_verify_prompt(language_code: str) -> str:
+    return VERIFY_PROMPTS.get(language_code, VERIFY_PROMPTS["en"])
+
+
+def _localized_denied_message(language_code: str) -> str:
+    return DENIED_MESSAGES.get(language_code, DENIED_MESSAGES["en"])
+
+
 def _build_metadata_payload(
     session_id: str,
     *,
@@ -323,7 +360,12 @@ async def _activate_resilience_takeover(
         session.fallback_triggered = True
 
     print(f"[Resilience] takeover session={session_id} reason={reason}")
-    await _stream_tts(websocket, FALLBACK_TECHNICAL_GLITCH_MESSAGE, "en")
+    await _speak_and_record(
+        websocket,
+        session_id,
+        FALLBACK_TECHNICAL_GLITCH_MESSAGE,
+        "en",
+    )
     call_service.set_muted(session_id, True)
     call_service.transition_to_escalated(session_id)
     await _emit_state(websocket, session_id, CallState.ESCALATED)
@@ -338,13 +380,11 @@ async def _activate_resilience_takeover(
 
 
 def _tokenize_transcript(transcript: str) -> list[str]:
-    return re.findall(r"[a-zA-Z0-9']+", transcript.lower())
+    return re.findall(r"[\w']+", transcript.lower())
 
 
 def _has_meaningful_content(transcript: str) -> bool:
     tokens = _tokenize_transcript(transcript)
-    if len(tokens) < 3:
-        return False
     non_filler = [token for token in tokens if token not in FILLER_WORDS]
     if not non_filler:
         return False
@@ -352,8 +392,12 @@ def _has_meaningful_content(transcript: str) -> bool:
         return True
     if any(token in MEANINGFUL_HINT_WORDS for token in non_filler):
         return True
+    if len(non_filler) == 1 and len(non_filler[0]) >= 5:
+        return True
+    if len(non_filler) == 2 and any(len(token) >= 3 for token in non_filler):
+        return True
     informative = [token for token in non_filler if len(token) >= 3]
-    return len(informative) >= 2
+    return len(informative) >= 1
 
 
 @app.websocket("/ws/call")
@@ -367,7 +411,7 @@ async def ws_call(websocket: WebSocket):
             try:
                 msg = await websocket.receive_json()
             except Exception as recv_err:
-                print(f"[WebSocket] receive error: {recv_err}")
+                logger.exception("[WebSocket] receive error")
                 break
 
             msg_type = msg.get("type")
@@ -382,14 +426,13 @@ async def ws_call(websocket: WebSocket):
                 call_service.transition_to_greeting(session_id)
                 await _emit_state(websocket, session_id, CallState.GREETING)
                 cached_greeting = call_service.get_cached_greeting_audio()
-                if cached_greeting:
-                    await _safe_send_json(
-                        websocket,
-                        {"type": "audio_chunk", "data": cached_greeting},
-                    )
-                    await _safe_send_json(websocket, {"type": "audio_done"})
-                else:
-                    await _stream_tts(websocket, GREETING_TEXT, "en")
+                await _speak_and_record(
+                    websocket,
+                    session_id,
+                    GREETING_TEXT,
+                    "en",
+                    prebuilt_audio=cached_greeting,
+                )
                 call_service.transition_to_listening(session_id)
                 await _emit_state(websocket, session_id, CallState.LISTENING)
 
@@ -459,6 +502,7 @@ async def ws_call(websocket: WebSocket):
                     continue
 
                 if result and not result.skipped and result.text:
+                    call_service.append_user_turn(session_id, result.text)
                     await _safe_send_json(
                         websocket,
                         {"type": "transcript", "text": result.text, "is_final": result.is_final}
@@ -478,6 +522,7 @@ async def ws_call(websocket: WebSocket):
                                 _log_and_persist_transcript(session_id, result.text, current_state),
                             )
                         except Exception as exc:
+                            logger.exception("[ReasoningService] Confirmation error")
                             await _activate_resilience_takeover(
                                 websocket,
                                 session_id,
@@ -485,9 +530,16 @@ async def ws_call(websocket: WebSocket):
                             )
                             continue
 
-                            if confirmation is None:
-                                await _stream_tts(websocket, VERIFY_PROMPT, "en")
-                                continue
+                        if confirmation is None:
+                            session = call_service.get_session(session_id)
+                            verify_lang = session.last_language_code if session else "en"
+                            await _speak_and_record(
+                                websocket,
+                                session_id,
+                                _localized_verify_prompt(verify_lang),
+                                verify_lang,
+                            )
+                            continue
 
                         if confirmation.confirmed:
                             session = call_service.get_session(session_id)
@@ -504,7 +556,7 @@ async def ws_call(websocket: WebSocket):
                                     timeout=LLM_TIMEOUT_SECONDS,
                                 )
                             except Exception as exc:
-                                print(f"[ReasoningService] Assurance timeout/error: {exc}")
+                                logger.exception("[ReasoningService] Assurance timeout/error")
                                 assurance_text = (
                                     f"Help is on the way to {session.last_location}. Stay on the line."
                                     if session.last_location
@@ -533,10 +585,11 @@ async def ws_call(websocket: WebSocket):
                             transcription_service.clear_buffer(session_id)
                             session = call_service.get_session(session_id)
                             if not (session and session.is_muted):
-                                await _stream_tts(
+                                await _speak_and_record(
                                     websocket,
+                                    session_id,
                                     assurance_text,
-                                    confirmation.language_code or "en",
+                                    session.last_language_code,
                                 )
 
                         elif confirmation.is_denial:
@@ -556,19 +609,23 @@ async def ws_call(websocket: WebSocket):
                             transcription_service.clear_buffer(session_id)
                             session = call_service.get_session(session_id)
                             if not (session and session.is_muted):
-                                await _stream_tts(
+                                denied_lang = confirmation.language_code or (session.last_language_code if session else "en")
+                                await _speak_and_record(
                                     websocket,
-                                    DENIED_MESSAGE,
-                                    confirmation.language_code or "en",
+                                    session_id,
+                                    _localized_denied_message(denied_lang),
+                                    denied_lang,
                                 )
                         else:
                             transcription_service.clear_buffer(session_id)
                             session = call_service.get_session(session_id)
                             if not (session and session.is_muted):
-                                await _stream_tts(
+                                verify_lang = confirmation.language_code or (session.last_language_code if session else "en")
+                                await _speak_and_record(
                                     websocket,
-                                    VERIFY_PROMPT,
-                                    confirmation.language_code or (session.last_language_code if session else "en"),
+                                    session_id,
+                                    _localized_verify_prompt(verify_lang),
+                                    verify_lang,
                                 )
 
                     elif current_state == CallState.LISTENING:
@@ -584,8 +641,7 @@ async def ws_call(websocket: WebSocket):
                             reasoning, _ = await asyncio.gather(
                                 asyncio.wait_for(
                                     reasoning_service.analyze(
-                                        result.text,
-                                        session_id=session_id,
+                                        call_service.get_conversation_history(session_id),
                                         acoustic_context=acoustic_context,
                                     ),
                                     timeout=LLM_TIMEOUT_SECONDS,
@@ -593,16 +649,16 @@ async def ws_call(websocket: WebSocket):
                                 _log_and_persist_transcript(session_id, result.text, current_state),
                             )
                         except Exception as exc:
-                            print(f"[ReasoningService] Groq reasoning timeout/error: {type(exc).__name__}: {exc}")
+                            logger.exception("[ReasoningService] Groq reasoning timeout/error")
                             reasoning = reasoning_service.fallback_analyze(
-                                result.text,
+                                call_service.get_conversation_history(session_id),
                                 acoustic_context=acoustic_context,
                             )
 
                         if reasoning is None:
-                            print("[ReasoningService] Groq reasoning failed, using local fallback")
+                            logger.warning("[ReasoningService] Groq reasoning failed, using local fallback")
                             reasoning = reasoning_service.fallback_analyze(
-                                result.text,
+                                call_service.get_conversation_history(session_id),
                                 acoustic_context=acoustic_context,
                             )
 
@@ -617,16 +673,16 @@ async def ws_call(websocket: WebSocket):
                                 "data": _build_metadata_payload(
                                     session_id,
                                     is_user_speaking=False,
-                                    requires_confirmation=True,
+                                    requires_confirmation=reasoning.is_complete_complaint,
                                     detected_sentiment=reasoning.sentiment,
                                 ),
                             }
                         )
 
-                        if reasoning.restatement:
+                        if reasoning.is_complete and reasoning.response_text and reasoning.intent:
                             call_service.transition_to_verifying(
                                 session_id,
-                                restatement=reasoning.restatement,
+                                restatement=reasoning.response_text,
                                 language_code=reasoning.language_code,
                                 intent=reasoning.intent,
                                 urgency=reasoning.urgency_level,
@@ -636,11 +692,76 @@ async def ws_call(websocket: WebSocket):
                             transcription_service.clear_buffer(session_id)
                             session = call_service.get_session(session_id)
                             if not (session and session.is_muted):
-                                await _stream_tts(
+                                await _speak_and_record(
                                     websocket,
-                                    f"{reasoning.restatement} {VERIFY_PROMPT}",
+                                    session_id,
+                                    reasoning.response_text,
                                     reasoning.language_code,
                                 )
+                        else:
+                            call_service.update_listening_context(
+                                session_id,
+                                language_code=reasoning.language_code,
+                                intent=reasoning.intent,
+                                location=reasoning.location,
+                                urgency=reasoning.urgency_level,
+                                response_text=reasoning.response_text,
+                            )
+                            transcription_service.clear_buffer(session_id)
+                            session = call_service.get_session(session_id)
+                            
+                            if reasoning.intent and not reasoning.location:
+                                call_service.transition_to_waiting_for_location(session_id)
+                                await _emit_state(websocket, session_id, CallState.WAITING_FOR_LOCATION)
+
+                            if (
+                                reasoning.response_text
+                                and not (session and session.is_muted)
+                            ):
+                                await _speak_and_record(
+                                    websocket,
+                                    session_id,
+                                    reasoning.response_text,
+                                    reasoning.language_code,
+                                )
+
+                    elif current_state == CallState.WAITING_FOR_LOCATION:
+                        if not _has_meaningful_content(result.text):
+                            await _log_and_persist_transcript(
+                                session_id,
+                                result.text,
+                                CallState.WAITING_FOR_LOCATION,
+                            )
+                            continue
+
+                        await _log_and_persist_transcript(session_id, result.text, CallState.WAITING_FOR_LOCATION)
+                        
+                        location = result.text.strip()
+                        session = call_service.get_session(session_id)
+                        intent = session.last_intent if session else None
+                        urgency = session.last_urgency if session else 1
+                        lang = session.last_language_code if session else "en"
+
+                        confirmation_text = reasoning_service.build_confirmation_text(lang, intent, location)
+                        
+                        call_service.transition_to_verifying(
+                            session_id,
+                            restatement=confirmation_text,
+                            language_code=lang,
+                            intent=intent,
+                            urgency=urgency,
+                            location=location,
+                        )
+                        await _emit_state(websocket, session_id, CallState.VERIFYING)
+                        transcription_service.clear_buffer(session_id)
+                        
+                        if not (session and session.is_muted):
+                            await _speak_and_record(
+                                websocket,
+                                session_id,
+                                confirmation_text,
+                                lang,
+                            )
 
                     elif current_state in {CallState.ASSURANCE, CallState.ESCALATED, CallState.GREETING}:
                         await _log_and_persist_transcript(session_id, result.text, current_state)
@@ -676,7 +797,7 @@ async def ws_call(websocket: WebSocket):
                             timeout=ANALYTICS_TIMEOUT_SECONDS,
                         )
                     except Exception as exc:
-                        print(f"[Analytics] post-mortem timeout/error: {exc}")
+                        logger.exception("[Analytics] post-mortem timeout/error")
 
                     report_payload = (
                         report.model_dump()
@@ -709,7 +830,7 @@ async def ws_call(websocket: WebSocket):
                 break
 
     except WebSocketDisconnect:
-        print(f"[WebSocket] Client disconnected: session={session_id}")
+        logger.info("[WebSocket] Client disconnected: session=%s", session_id)
         if session_id:
             transcription_service.end_session(session_id)
             acoustic_service.end_session(session_id)
@@ -717,7 +838,7 @@ async def ws_call(websocket: WebSocket):
             call_service.end_session(session_id)
             manager.disconnect(session_id)
     except Exception as exc:
-        print(f"[WebSocket] Unexpected error: {exc}")
+        logger.exception("[WebSocket] Unexpected error")
         if session_id:
             transcription_service.end_session(session_id)
             acoustic_service.end_session(session_id)

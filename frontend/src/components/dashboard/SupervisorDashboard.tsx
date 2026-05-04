@@ -44,7 +44,7 @@ export function SupervisorDashboard() {
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const lastTranscriptRef = useRef("");
-  const lastRestatementRef = useRef("");
+  const lastAiMessageRef = useRef("");
 
   const prevTranscript = useRef(transcript);
   if (transcript && transcript !== prevTranscript.current) {
@@ -63,17 +63,18 @@ export function SupervisorDashboard() {
     }
   }
 
-  const prevRestatement = useRef(reasoning?.restatement);
-  if (reasoning?.restatement && reasoning.restatement !== prevRestatement.current) {
-    prevRestatement.current = reasoning.restatement;
-    if (reasoning.restatement !== lastRestatementRef.current) {
-      lastRestatementRef.current = reasoning.restatement;
+  const prevAiMessage = useRef(reasoning?.response_text ?? reasoning?.restatement);
+  const currentAiMessage = reasoning?.response_text ?? reasoning?.restatement ?? null;
+  if (currentAiMessage && currentAiMessage !== prevAiMessage.current) {
+    prevAiMessage.current = currentAiMessage;
+    if (currentAiMessage !== lastAiMessageRef.current) {
+      lastAiMessageRef.current = currentAiMessage;
       setEntries((prev) => [
         ...prev,
         {
           id: `ai-${Date.now()}`,
           sender: "ai",
-          text: reasoning.restatement,
+          text: currentAiMessage,
           timestamp: new Date(),
         },
       ]);
@@ -85,7 +86,7 @@ export function SupervisorDashboard() {
       stopCall();
       setEntries([]);
       lastTranscriptRef.current = "";
-      lastRestatementRef.current = "";
+      lastAiMessageRef.current = "";
     } else {
       setShowSummaryModal(false);
       setView("live");
@@ -123,40 +124,40 @@ export function SupervisorDashboard() {
             background: `conic-gradient(${ringColor} ${pct}%, rgba(255,255,255,0.08) ${pct}% 100%)`,
           }}
         >
-          <div className="h-16 w-16 rounded-full bg-zinc-950/90 border border-white/10 grid place-items-center text-lg font-bold text-white">
+          <div className="h-16 w-16 rounded-full bg-white border border-black/10 grid place-items-center text-lg font-bold text-black">
             {value}
           </div>
         </div>
-        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs text-black/60">{label}</span>
       </div>
     );
   };
 
   return (
-    <div className="dark min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-white/5">
+    <div className="min-h-screen bg-white text-black">
+      <header className="sticky top-0 z-50 backdrop-blur-xl bg-white/90 border-b border-black/10">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-              <Radio className="h-4 w-4 text-cyan-400" />
+            <div className="h-9 w-9 rounded-xl bg-black/5 border border-black/10 flex items-center justify-center">
+              <Radio className="h-4 w-4 text-black" />
             </div>
             <div>
               <h1 className="text-lg font-bold tracking-tight">
-                VaakSetu <span className="text-muted-foreground font-normal">Command Center</span>
+                VaakSetu <span className="text-black/60 font-normal">Command Center</span>
               </h1>
-              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">
+              <p className="text-[10px] text-black/50 uppercase tracking-widest">
                 1092 Helpline • Supervisor Dashboard
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+            <div className="flex items-center gap-2 rounded-xl border border-black/10 bg-white p-1">
               <Button
                 variant="ghost"
                 className={cn(
                   "h-9 gap-2 cursor-pointer rounded-lg",
-                  view === "live" && "bg-cyan-500/15 text-cyan-300",
+                  view === "live" && "bg-black text-white",
                 )}
                 onClick={() => setView("live")}
               >
@@ -167,7 +168,7 @@ export function SupervisorDashboard() {
                 variant="ghost"
                 className={cn(
                   "h-9 gap-2 cursor-pointer rounded-lg",
-                  view === "records" && "bg-cyan-500/15 text-cyan-300",
+                  view === "records" && "bg-black text-white",
                 )}
                 onClick={() => setView("records")}
               >
@@ -181,13 +182,13 @@ export function SupervisorDashboard() {
                 className={cn(
                   "h-2 w-2 rounded-full",
                   isConnected
-                    ? "bg-emerald-400"
+                    ? "bg-black"
                     : callActive
-                      ? "bg-amber-400 animate-pulse"
-                      : "bg-zinc-600",
+                      ? "bg-black/70 animate-pulse"
+                      : "bg-black/30",
                 )}
               />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-xs text-black/60">
                 {error
                   ? error
                   : !callActive
@@ -203,7 +204,7 @@ export function SupervisorDashboard() {
             </div>
 
             {callActive && isAiMuted && (
-              <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 bg-rose-500/15 border border-rose-500/30 px-3 py-1 rounded-full">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-black bg-black/5 border border-black/20 px-3 py-1 rounded-full">
                 Human in Control
               </span>
             )}
@@ -214,8 +215,8 @@ export function SupervisorDashboard() {
               className={cn(
                 "gap-2 rounded-xl px-5 cursor-pointer",
                 callActive
-                  ? "bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30"
-                  : "bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30",
+                  ? "bg-black text-white border border-black"
+                  : "bg-white text-black border border-black/20",
               )}
               variant="ghost"
             >
@@ -239,7 +240,7 @@ export function SupervisorDashboard() {
             <VulnerabilityBanner urgency={urgency} isHighDistress={isHighDistress} />
 
             {callActive && (
-              <Card className="border-white/10 bg-white/[0.02]">
+              <Card className="border-black/10 bg-white">
                 <CardContent className="p-4">
                   <CallStateBreadcrumb current={callState} />
                 </CardContent>
@@ -248,31 +249,31 @@ export function SupervisorDashboard() {
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-8 flex flex-col gap-6">
-                <Card className="flex-1 border-white/10 bg-white/[0.02] overflow-hidden">
+                <Card className="flex-1 border-black/10 bg-white overflow-hidden">
                   <CardContent className="p-0 flex flex-col h-[600px]">
-                    <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                    <div className="px-6 py-4 border-b border-black/10 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div
                           className={cn(
                             "h-3 w-3 rounded-full",
-                            callActive ? "bg-rose-500 animate-pulse" : "bg-zinc-600",
+                            callActive ? "bg-black animate-pulse" : "bg-black/30",
                           )}
                         />
                         <span className="text-sm font-semibold">Live Call Feed</span>
                         {callActive && (
-                          <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded-full">
+                          <span className="text-[10px] text-black font-mono bg-black/5 px-2 py-0.5 rounded-full">
                             ● REC
                           </span>
                         )}
                       </div>
                       {metadata?.session_id && (
-                        <span className="text-[10px] font-mono text-muted-foreground/40">
+                        <span className="text-[10px] font-mono text-black/40">
                           Session: {metadata.session_id.slice(0, 8)}...
                         </span>
                       )}
                     </div>
 
-                    <div className="px-6 py-3 border-b border-white/5 bg-white/[0.01]">
+                    <div className="px-6 py-3 border-b border-black/10 bg-white">
                       <AudioVisualizer analyser={analyserNode.current} isActive={isRecording} />
                     </div>
 
@@ -287,20 +288,20 @@ export function SupervisorDashboard() {
                 <SentimentWidget value={sentiment} />
                 <UrgencyMeter level={urgency} />
                 <LanguageRegionWidget languageCode={langCode} reasoning={reasoning} />
-                <Separator className="bg-white/5" />
+                <Separator className="bg-black/10" />
                 <AcousticWidget data={acousticData} />
 
                 {reasoning?.restatement && (
-                  <Card className="border-violet-500/20 bg-violet-500/5">
+                  <Card className="border-black/10 bg-white">
                     <CardContent className="p-4">
-                      <p className="text-[10px] uppercase tracking-widest font-bold text-violet-400/60 mb-2">
+                      <p className="text-[10px] uppercase tracking-widest font-bold text-black/50 mb-2">
                         AI Restatement
                       </p>
-                      <p className="text-sm text-violet-200 leading-relaxed">
+                      <p className="text-sm text-black leading-relaxed">
                         {reasoning.restatement}
                       </p>
                       {reasoning.needs_verification && (
-                        <div className="mt-3 flex items-center gap-2 text-amber-400">
+                        <div className="mt-3 flex items-center gap-2 text-black/70">
                           <span className="text-xs">⚠</span>
                           <span className="text-[10px] font-bold uppercase tracking-wider">
                             Needs Verification
@@ -319,13 +320,13 @@ export function SupervisorDashboard() {
       </main>
 
       {shouldShowSummary && callSummary && (
-        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="w-full max-w-2xl border-white/15 bg-zinc-950/95 shadow-2xl">
+        <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="w-full max-w-2xl border-black/10 bg-white shadow-2xl">
             <CardContent className="p-6 space-y-5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold">Call Summary</h2>
-                  <p className="text-xs text-muted-foreground">Post-call performance report</p>
+                  <p className="text-xs text-black/50">Post-call performance report</p>
                 </div>
                 <Button
                   variant="ghost"
@@ -337,22 +338,22 @@ export function SupervisorDashboard() {
               </div>
 
               <div className="grid grid-cols-2 gap-6">
-                <ScoreRing value={callSummary.understanding_score} label="Understanding Score" ringColor="#22d3ee" />
-                <ScoreRing value={callSummary.cultural_accuracy} label="Cultural Accuracy" ringColor="#34d399" />
+                <ScoreRing value={callSummary.understanding_score} label="Understanding Score" ringColor="#111111" />
+                <ScoreRing value={callSummary.cultural_accuracy} label="Cultural Accuracy" ringColor="#111111" />
               </div>
 
-              <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-amber-300/80 mb-1">
+              <div className="rounded-xl border border-black/10 bg-black/5 p-4">
+                <p className="text-[10px] uppercase tracking-widest text-black/60 mb-1">
                   Bottleneck Detected
                 </p>
-                <p className="text-sm text-amber-100">{callSummary.bottleneck_detected}</p>
+                <p className="text-sm text-black">{callSummary.bottleneck_detected}</p>
               </div>
 
-              <div className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-violet-300/80 mb-1">
+              <div className="rounded-xl border border-black/10 bg-black/5 p-4">
+                <p className="text-[10px] uppercase tracking-widest text-black/60 mb-1">
                   Coaching Tip
                 </p>
-                <p className="text-sm text-violet-100">{callSummary.coaching_tip}</p>
+                <p className="text-sm text-black">{callSummary.coaching_tip}</p>
               </div>
             </CardContent>
           </Card>

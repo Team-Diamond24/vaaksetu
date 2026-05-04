@@ -1,5 +1,5 @@
 """
-Low-latency reasoning service powered by Groq chat models.
+Reasoning service with full conversation-memory slot filling.
 """
 
 from __future__ import annotations
@@ -13,113 +13,174 @@ from groq import Groq
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services.cultural_service import CulturalContext, cultural_context_service
 
 
-TRIAGE_MODEL = "llama-3.1-8b-instant"
-TRIAGE_SYSTEM_PROMPT = (
-    "1092 triage. Extract intent(Medical|Fire|Crime|Inquiry), location, "
-    "restatement(one confirmation sentence in caller language), "
-    "needs_verification. Output strict JSON only with keys "
-    "restatement,location,intent,needs_verification."
-)
-ASSURANCE_SYSTEM_PROMPT = (
-    "1092 assurance. Return one short reassuring sentence in the caller language. "
-    "Mention the location once if present. Plain text only."
-)
+TRIAGE_MODEL = "llama-3.3-70b-versatile"
+SYSTEM_PROMPT = """You are VaakSetu, a 1092 emergency helpline dispatcher in Karnataka. You must output strict JSON.
+Read the entire conversation history to extract facts.
+
+RULES:
+1. To dispatch help, you MUST have both an actionable 'intent' (e.g., Fire, Medical) AND a specific 'location' (e.g., Sector 12, MG Road). "My house" or "here" are NOT valid locations.
+2. If intent or location is missing, set "is_complete": false and ask the user for the missing info in "response_text".
+3. If both are present, set "is_complete": true and provide a confirmation summary in "response_text".
+4. STRICT LANGUAGE MATCHING: If the user's latest input is Hindi (even if typed in English letters), your "response_text" MUST be in Devanagari script. If Kannada, use Kannada script. If English, use English.
+
+JSON SCHEMA TO RETURN:
+{
+  "detected_language": "en" | "hi" | "kn",
+  "intent": "string or null",
+  "location": "string or null",
+  "is_complete": boolean,
+  "response_text": "String in the native script matching detected_language"
+}"""
 
 YES_WORDS = {
     "en": {"yes", "yeah", "yep", "correct", "right", "ok", "okay"},
-    "hi": {"haan", "ha", "haanji", "ji", "sahi", "theek"},
-    "kn": {"howdu", "haudu", "sari", "correct", "aythu", "aitu"},
+    "hi": {
+        "haan",
+        "ha",
+        "haa",
+        "han",
+        "haanji",
+        "haji",
+        "ji",
+        "sahi",
+        "theek",
+        "हाँ",
+        "हां",
+    },
+    "kn": {"howdu", "houdu", "haudu", "sari", "aythu", "aitu", "ಹೌದು"},
 }
-
 NO_WORDS = {
     "en": {"no", "nope", "wrong", "incorrect"},
-    "hi": {"nahi", "nahin", "galat", "mat", "nahiin"},
-    "kn": {"illa", "beda", "tappu", "alla"},
+    "hi": {"nahi", "nahin", "nhi", "galat", "नहीं", "नहि"},
+    "kn": {"illa", "beda", "tappu", "alla", "ಇಲ್ಲ"},
 }
-
-SEVERE_KEYWORDS = {
-    "medical": {
+HINDI_HINTS = {
+    "haan",
+    "nahi",
+    "nahin",
+    "madad",
+    "aag",
+    "bachao",
+    "mera",
+    "meri",
+    "ghar",
+    "main",
+    "hai",
+    "ho",
+    "gaya",
+    "accident",
+}
+KANNADA_HINTS = {
+    "haudu",
+    "howdu",
+    "illa",
+    "beda",
+    "benki",
+    "mane",
+    "nanna",
+    "yalli",
+    "ide",
+    "aythu",
+    "raste",
+}
+INTENT_KEYWORDS: dict[str, set[str]] = {
+    "Fire": {"fire", "benki", "aag", "आग", "ಬೆಂಕಿ", "smoke", "burn", "burning", "gas leak"},
+    "Medical": {
         "medical",
         "ambulance",
-        "bleeding",
-        "unconscious",
-        "breathe",
-        "breathing",
-        "attack",
-        "stroke",
-        "collapse",
-        "heart",
-        "chest",
         "accident",
+        "एक्सीडेंट",
+        "दुर्घटना",
+        "ಆಂಬುಲೆನ್ಸ್",
+        "ಅಪಘಾತ",
+        "bleeding",
+        "खून",
+        "रक्त",
+        "ಗಾಯ",
         "injury",
+        "heart",
+        "stroke",
+        "unconscious",
+        "breathing",
+        "hospital",
     },
-    "fire": {
-        "fire",
-        "smoke",
-        "burn",
-        "burning",
-        "explosion",
-        "gas",
-        "leak",
-        "flood",
-        "rescue",
-    },
-    "crime": {
+    "Crime": {
         "crime",
         "police",
-        "attack",
-        "assault",
-        "kidnap",
-        "murder",
-        "theft",
+        "पुलिस",
+        "चोरी",
+        "हमला",
+        "पोलीस",
+        "ಕಳ್ಳತನ",
+        "ಪೊಲೀಸ್",
         "robbery",
+        "theft",
+        "assault",
+        "attack",
         "fight",
-        "weapon",
+        "chor",
         "thief",
+        "kidnap",
     },
+    "Flood/Tsunami": {"tsunami", "flood", "water rising", "wave", "inundation", "सुनामी", "बाढ़", "ಸುನಾಮಿ", "ನೆರೆ"},
 }
-
+GENERIC_LOCATIONS = {
+    "my house",
+    "house",
+    "home",
+    "my home",
+    "here",
+    "there",
+    "outside",
+    "inside",
+    "office",
+    "my office",
+    "room",
+    "my room",
+    "highway",
+    "road",
+    "street",
+    "area",
+    "place",
+    "ghar",
+    "mera ghar",
+    "house only",
+    "mane",
+    "nanna mane",
+}
 ANGRY_KEYWORDS = {"angry", "furious", "fight", "threat", "threatening"}
-FEARFUL_KEYWORDS = {"help", "please", "scared", "afraid", "panic", "panicing"}
-HINDI_HINTS = {"haan", "nahi", "madad", "aag", "chor", "sahi"}
-KANNADA_HINTS = {"howdu", "haudu", "sari", "illa", "beda", "benki", "usiru"}
+FEARFUL_KEYWORDS = {"help", "please", "scared", "afraid", "panic", "bachao", "sahay"}
 
 
 class TriageLLMOutput(BaseModel):
-    restatement: str = ""
+    detected_language: str = "en"
+    intent: str | None = None
     location: str | None = None
-    intent: str = "Inquiry"
-    needs_verification: bool = True
+    is_complete: bool = False
+    response_text: str = ""
 
 
 class ReasoningOutput(BaseModel):
-    restatement: str = Field(default="")
-    location: str | None = Field(default=None)
-    intent: str = Field(default="Inquiry")
+    detected_language: str = "en"
+    intent: str | None = None
+    location: str | None = None
+    is_complete: bool = False
+    response_text: str = ""
     urgency_level: int = Field(default=1, ge=1, le=5)
-    sentiment: str = Field(default="neutral")
-    needs_verification: bool = Field(default=True)
-    language_code: str = Field(default="en")
+    sentiment: str = "neutral"
+    language_code: str = "en"
+    needs_verification: bool = False
+    is_complete_complaint: bool = False
+    restatement: str | None = None
+    missing_info_question: str | None = None
 
 
 class ConfirmationOutput(BaseModel):
     confirmed: bool = False
     is_denial: bool = False
     language_code: str = "en"
-
-
-def _normalize_intent(intent: str) -> str:
-    mapping = {
-        "medical": "Medical",
-        "fire": "Fire",
-        "crime": "Crime",
-        "inquiry": "Inquiry",
-        "police": "Crime",
-    }
-    return mapping.get((intent or "Inquiry").strip().lower(), "Inquiry")
 
 
 def _tokenize(text: str) -> list[str]:
@@ -134,6 +195,11 @@ def _contains_kannada(text: str) -> bool:
     return any("\u0c80" <= ch <= "\u0cff" for ch in text)
 
 
+def _normalize_language(code: str | None, fallback: str = "en") -> str:
+    normalized = (code or fallback or "en").strip().lower()
+    return normalized if normalized in {"en", "hi", "kn"} else fallback
+
+
 def _strip_code_fences(text: str) -> str:
     cleaned = text.strip()
     if cleaned.startswith("```json"):
@@ -145,73 +211,153 @@ def _strip_code_fences(text: str) -> str:
     return cleaned.strip()
 
 
-def _extract_location(transcript: str) -> str | None:
+def _clean_location(location: str | None) -> str | None:
+    if not location:
+        return None
+    cleaned = location.strip(" .,-")
+    return cleaned or None
+
+
+def _is_actionable_location(location: str | None) -> bool:
+    cleaned = _clean_location(location)
+    if not cleaned:
+        return False
+    normalized = " ".join(_tokenize(cleaned))
+    if not normalized or normalized in GENERIC_LOCATIONS:
+        return False
+    if any(char.isdigit() for char in normalized):
+        return True
+    if re.search(
+        r"\b(sector|road|rd|street|st|nagar|layout|phase|block|cross|main|"
+        r"bus stand|station|circle|junction|market|colony|city|town|village)\b",
+        normalized,
+    ):
+        return True
+    tokens = normalized.split()
+    if len(tokens) >= 2:
+        return True
+    return len(normalized) >= 6
+
+
+def _location_from_text(text: str) -> str | None:
     patterns = [
-        r"\b(?:at|in|near|from|on)\s+([A-Za-z0-9][A-Za-z0-9,\- ]{2,60})",
-        r"\b(?:address is|location is)\s+([A-Za-z0-9][A-Za-z0-9,\- ]{2,60})",
+        r"\b(?:at|in|near|on|from)\s+([A-Za-z0-9][A-Za-z0-9,\- ]{2,80})",
+        r"\b(?:location is|address is)\s+([A-Za-z0-9][A-Za-z0-9,\- ]{2,80})",
     ]
     for pattern in patterns:
-        match = re.search(pattern, transcript, flags=re.IGNORECASE)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            location = re.split(
-                r"\b(?:and|with|because|there is|there's)\b",
+            candidate = re.split(
+                r"\b(?:because|and|there is|there's|please|help)\b",
                 match.group(1),
                 maxsplit=1,
             )[0]
-            location = location.strip(" ,.-")
-            if location:
-                return location
+            candidate = _clean_location(candidate)
+            if _is_actionable_location(candidate):
+                return candidate
     return None
 
 
-def _build_fallback_restatement(
-    *,
-    intent: str,
-    location: str | None,
+def _intent_from_text(text: str) -> str | None:
+    lowered = text.lower()
+    for intent, keywords in INTENT_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            return intent
+    return None
+
+
+def _has_native_script(text: str, language_code: str) -> bool:
+    if language_code == "hi":
+        return _contains_devanagari(text)
+    if language_code == "kn":
+        return _contains_kannada(text)
+    return True
+
+
+def _translate_intent(intent: str | None, language_code: str) -> str:
+    if not intent:
+        if language_code == "hi":
+            return "आपातस्थिति"
+        if language_code == "kn":
+            return "ತುರ್ತು ಪರಿಸ್ಥಿತಿ"
+        return "emergency"
+    if language_code == "hi":
+        return {
+            "Fire": "आग",
+            "Medical": "मेडिकल आपातस्थिति",
+            "Crime": "अपराध",
+            "Flood/Tsunami": "बाढ़ या सुनामी",
+        }.get(intent, "आपातस्थिति")
+    if language_code == "kn":
+        return {
+            "Fire": "ಬೆಂಕಿ",
+            "Medical": "ವೈದ್ಯಕೀಯ ತುರ್ತು ಪರಿಸ್ಥಿತಿ",
+            "Crime": "ಅಪರಾಧ",
+            "Flood/Tsunami": "ನೆರೆ ಅಥವಾ ಸುನಾಮಿ",
+        }.get(intent, "ತುರ್ತು ಪರಿಸ್ಥಿತಿ")
+    return intent
+
+
+def _build_missing_info_question(
     language_code: str,
+    *,
+    missing_intent: bool,
+    missing_location: bool,
 ) -> str:
     if language_code == "hi":
-        emergency = {
-            "Medical": "मेडिकल",
-            "Fire": "आग",
-            "Crime": "पुलिस",
-            "Inquiry": "आपातकाल",
-        }.get(intent, "आपातकाल")
-        if location:
-            return f"मैं समझ रहा हूँ कि आपको {location} में {emergency} मदद चाहिए, क्या यह सही है?"
-        return f"मैं समझ रहा हूँ कि आपको {emergency} मदद चाहिए, क्या यह सही है?"
-
+        if missing_intent and missing_location:
+            return "कृपया बताइए क्या आपातस्थिति है और सही इलाका या पता क्या है?"
+        if missing_location:
+            return "कृपया सही इलाका, पता या नज़दीकी स्थल बताइए।"
+        return "कृपया बताइए क्या आपातस्थिति है?"
     if language_code == "kn":
-        emergency = {
-            "Medical": "ವೈದ್ಯಕೀಯ",
-            "Fire": "ಅಗ್ನಿ",
-            "Crime": "ಪೊಲೀಸ್",
-            "Inquiry": "ತುರ್ತು",
-        }.get(intent, "ತುರ್ತು")
+        if missing_intent and missing_location:
+            return "ದಯವಿಟ್ಟು ಯಾವ ತುರ್ತು ಸಮಸ್ಯೆ ಇದೆ ಮತ್ತು ಸರಿಯಾದ ಸ್ಥಳ ಅಥವಾ ವಿಳಾಸ ಏನು ಎಂದು ತಿಳಿಸಿ."
+        if missing_location:
+            return "ದಯವಿಟ್ಟು ಸರಿಯಾದ ಪ್ರದೇಶ, ವಿಳಾಸ ಅಥವಾ ಹತ್ತಿರದ ಗುರುತು ತಿಳಿಸಿ."
+        return "ದಯವಿಟ್ಟು ಯಾವ ತುರ್ತು ಸಮಸ್ಯೆ ಇದೆ ಎಂದು ತಿಳಿಸಿ."
+    if missing_intent and missing_location:
+        return "Please tell me what emergency is happening and the exact location."
+    if missing_location:
+        return "Please tell me the exact area, address, or nearby landmark."
+    return "Please tell me what emergency is happening."
+
+
+def _build_confirmation_text(language_code: str, intent: str | None, location: str) -> str:
+    localized_intent = _translate_intent(intent, language_code)
+    if language_code == "hi":
+        return (
+            f"मुझे समझ आ रहा है कि {location} में {localized_intent} की स्थिति है। "
+            "क्या यह सही है?"
+        )
+    if language_code == "kn":
+        return (
+            f"{location} ನಲ್ಲಿ {localized_intent} ಇದೆ ಎಂದು ನನಗೆ ಅರ್ಥವಾಗುತ್ತಿದೆ. "
+            "ಇದು ಸರಿಯೇ?"
+        )
+    return f"I understand there is a {localized_intent} emergency at {location}. Is that correct?"
+
+
+def _build_assurance_text(language_code: str, location: str | None) -> str:
+    if language_code == "hi":
         if location:
-            return f"ನಿಮಗೆ {location} ನಲ್ಲಿ {emergency} ಸಹಾಯ ಬೇಕಿದೆ, ಇದು ಸರಿಯೇ?"
-        return f"ನಿಮಗೆ {emergency} ಸಹಾಯ ಬೇಕಿದೆ, ಇದು ಸರಿಯೇ?"
-
+            return f"मदद {location} के लिए भेजी जा रही है। कृपया लाइन पर बने रहिए।"
+        return "मदद भेजी जा रही है। कृपया लाइन पर बने रहिए।"
+    if language_code == "kn":
+        if location:
+            return f"{location} ಗೆ ಸಹಾಯ ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ಲೈನ್‌ನಲ್ಲಿ ಇರಿ."
+        return "ಸಹಾಯ ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ಲೈನ್‌ನಲ್ಲಿ ಇರಿ."
     if location:
-        return f"I understand you need {intent.lower()} help at {location}, is that correct?"
-    return f"I understand you need {intent.lower()} help, is that correct?"
-
-
-def _fallback_assurance(location: str | None) -> str:
-    if location:
-        return f"Help is on the way to {location}. Stay on the line."
-    return "Help is on the way. Stay on the line."
+        return f"Help is being sent to {location}. Please stay on the line."
+    return "Help is being sent. Please stay on the line."
 
 
 class ReasoningService:
-    """Groq-backed triage with local fallbacks."""
-
     def __init__(self) -> None:
         self._client = Groq(api_key=settings.groq_api_key)
-        self._turn_history: dict[str, list[str]] = {}
 
     def reset_session(self, session_id: str) -> None:
-        self._turn_history.pop(session_id, None)
+        return None
 
     def detect_language(self, text: str) -> str:
         if not text:
@@ -220,7 +366,6 @@ class ReasoningService:
             return "kn"
         if _contains_devanagari(text):
             return "hi"
-
         tokens = set(_tokenize(text))
         if tokens & KANNADA_HINTS:
             return "kn"
@@ -228,188 +373,204 @@ class ReasoningService:
             return "hi"
         return "en"
 
-    def _build_recent_context(self, session_id: str | None, transcript: str) -> str:
-        if not session_id:
-            return transcript.strip()
+    def _extract_slots_from_history(
+        self,
+        conversation_history: list[dict[str, str]],
+    ) -> tuple[str | None, str | None, str]:
+        user_turns = [item["content"] for item in conversation_history if item.get("role") == "user"]
+        combined = " ".join(user_turns)
+        latest_user_text = user_turns[-1] if user_turns else ""
 
-        history = self._turn_history.setdefault(session_id, [])
-        history.append(transcript.strip())
-        if len(history) > 2:
-            history = history[-2:]
-            self._turn_history[session_id] = history
-        return " | ".join(history)
+        intent = _intent_from_text(combined)
+        location = None
+        for user_text in reversed(user_turns):
+            location = _location_from_text(user_text)
+            if location:
+                break
 
-    def _compact_cultural_context(self, transcript: str) -> tuple[CulturalContext, str]:
-        cultural_ctx = cultural_context_service.get_context(transcript)
-        if not cultural_ctx.matched_terms:
-            return cultural_ctx, ""
+        if not location and intent:
+            latest_candidate = _clean_location(latest_user_text)
+            if (
+                latest_candidate
+                and _is_actionable_location(latest_candidate)
+                and not _intent_from_text(latest_candidate)
+            ):
+                location = latest_candidate
 
-        parts: list[str] = []
-        for entry in cultural_ctx.matched_terms[:3]:
-            part = f"{entry.term}={entry.canonical}"
-            if entry.urgency_hint:
-                part += f"/u{entry.urgency_hint}"
-            parts.append(part)
-        return cultural_ctx, "; ".join(parts)
+        return intent, location, latest_user_text
+
+    def _derive_sentiment(self, transcript: str, distress_level: int) -> str:
+        lowered = transcript.lower()
+        if distress_level >= 4:
+            return "distressed"
+        if any(word in lowered for word in ANGRY_KEYWORDS):
+            return "angry"
+        if any(word in lowered for word in FEARFUL_KEYWORDS):
+            return "fearful"
+        return "neutral"
 
     def _estimate_urgency(
         self,
         transcript: str,
-        intent: str,
+        intent: str | None,
         acoustic_context: dict[str, Any] | None,
-        cultural_ctx: CulturalContext,
     ) -> int:
         urgency = {
-            "Inquiry": 1,
-            "Medical": 3,
+            None: 1,
             "Fire": 4,
+            "Medical": 4,
             "Crime": 3,
-        }.get(intent, 1)
-
-        text = transcript.lower()
-        keyword_bucket = SEVERE_KEYWORDS.get(intent.lower(), set())
-        if any(word in text for word in keyword_bucket):
-            urgency = max(urgency, 4)
-
-        cultural_hint = max(
-            (entry.urgency_hint or 0 for entry in cultural_ctx.matched_terms),
-            default=0,
-        )
-        if cultural_hint:
-            urgency = max(urgency, cultural_hint)
-
+            "Flood/Tsunami": 5,
+        }.get(intent, 3 if intent else 1)
         distress = int((acoustic_context or {}).get("distress_level", 1))
         if distress >= 4:
             urgency = max(urgency, distress)
-        elif distress == 3 and urgency < 3:
-            urgency = 3
-
         return max(1, min(5, urgency))
 
-    def _derive_sentiment(self, transcript: str, distress_level: int) -> str:
-        text = transcript.lower()
-        if distress_level >= 4:
-            return "distressed"
-        if any(word in text for word in ANGRY_KEYWORDS):
-            return "angry"
-        if any(word in text for word in FEARFUL_KEYWORDS):
-            return "fearful"
-        return "neutral"
-
-    def _infer_intent(self, transcript: str) -> str:
-        text = transcript.lower()
-        for intent, keywords in SEVERE_KEYWORDS.items():
-            if any(keyword in text for keyword in keywords):
-                return _normalize_intent(intent)
-        return "Inquiry"
-
-    def fallback_analyze(
-        self,
-        transcript: str,
-        acoustic_context: dict[str, Any] | None = None,
-    ) -> ReasoningOutput:
-        acoustic = acoustic_context or {}
-        language_code = self.detect_language(transcript)
-        intent = self._infer_intent(transcript)
-        location = _extract_location(transcript)
-        cultural_ctx, _ = self._compact_cultural_context(transcript)
-        urgency = self._estimate_urgency(transcript, intent, acoustic, cultural_ctx)
-        distress_level = int(acoustic.get("distress_level", 1))
-
-        return ReasoningOutput(
-            restatement=_build_fallback_restatement(
-                intent=intent,
-                location=location,
-                language_code=language_code,
-            ),
-            location=location,
-            intent=intent,
-            urgency_level=urgency,
-            sentiment=self._derive_sentiment(transcript, distress_level),
-            needs_verification=True,
-            language_code=language_code,
-        )
-
-    def _chat_json_sync(self, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    def _chat_json_sync(self, user_prompt: str) -> str:
         response = self._client.chat.completions.create(
             model=TRIAGE_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=max_tokens,
+            max_tokens=220,
             response_format={"type": "json_object"},
         )
         return _strip_code_fences(response.choices[0].message.content or "")
 
-    def _chat_text_sync(self, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-        response = self._client.chat.completions.create(
-            model=TRIAGE_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=max_tokens,
+    def _normalize_llm_output(
+        self,
+        llm_output: TriageLLMOutput,
+        *,
+        fallback_language: str,
+        fallback_intent: str | None,
+        fallback_location: str | None,
+    ) -> tuple[str, str | None, str | None, bool, str]:
+        detected_language = _normalize_language(
+            llm_output.detected_language,
+            fallback=fallback_language,
         )
-        return _strip_code_fences(response.choices[0].message.content or "")
+        intent = llm_output.intent or fallback_intent
+        location = _clean_location(llm_output.location) or fallback_location
+        if not _is_actionable_location(location):
+            location = None
+
+        is_complete = bool(intent and location and llm_output.is_complete)
+        response_text = (llm_output.response_text or "").strip()
+        if not response_text or (
+            detected_language in {"hi", "kn"} and not _has_native_script(response_text, detected_language)
+        ):
+            if is_complete and location:
+                response_text = _build_confirmation_text(detected_language, intent, location)
+            else:
+                response_text = _build_missing_info_question(
+                    detected_language,
+                    missing_intent=intent is None,
+                    missing_location=location is None,
+                )
+
+        if not is_complete:
+            is_complete = bool(intent and location)
+            if is_complete and location:
+                response_text = _build_confirmation_text(detected_language, intent, location)
+
+        return detected_language, intent, location, is_complete, response_text
+
+    def fallback_analyze(
+        self,
+        conversation_history: list[dict[str, str]],
+        acoustic_context: dict[str, Any] | None = None,
+    ) -> ReasoningOutput | None:
+        intent, location, latest_user_text = self._extract_slots_from_history(conversation_history)
+        if not latest_user_text:
+            return None
+        detected_language = self.detect_language(latest_user_text)
+        is_complete = bool(intent and location)
+        response_text = (
+            _build_confirmation_text(detected_language, intent, location)
+            if is_complete and location
+            else _build_missing_info_question(
+                detected_language,
+                missing_intent=intent is None,
+                missing_location=location is None,
+            )
+        )
+        urgency = self._estimate_urgency(latest_user_text, intent, acoustic_context)
+        sentiment = self._derive_sentiment(
+            latest_user_text,
+            int((acoustic_context or {}).get("distress_level", 1)),
+        )
+        return ReasoningOutput(
+            detected_language=detected_language,
+            intent=intent,
+            location=location,
+            is_complete=is_complete,
+            response_text=response_text,
+            urgency_level=urgency,
+            sentiment=sentiment,
+            language_code=detected_language,
+            needs_verification=is_complete,
+            is_complete_complaint=is_complete,
+            restatement=response_text if is_complete else None,
+            missing_info_question=response_text if not is_complete else None,
+        )
 
     async def analyze(
         self,
-        transcript: str,
-        session_id: str | None = None,
+        conversation_history: list[dict[str, str]],
         acoustic_context: dict[str, Any] | None = None,
     ) -> ReasoningOutput | None:
-        if not transcript or not transcript.strip():
+        intent_hint, location_hint, latest_user_text = self._extract_slots_from_history(conversation_history)
+        if not latest_user_text:
             return None
-
-        recent_turns = self._build_recent_context(session_id, transcript)
-        cultural_ctx, compact_cultural = self._compact_cultural_context(transcript)
-        language_code = self.detect_language(transcript)
-        acoustic = acoustic_context or {}
-
-        prompt_parts = [
-            f"T:{recent_turns}",
-            f"L:{language_code}",
-            f"A:d={acoustic.get('distress_level', 1)},e={acoustic.get('environment', 'quiet')},l={acoustic.get('loudness', 'normal')}",
-        ]
-        if compact_cultural:
-            prompt_parts.append(f"C:{compact_cultural}")
-
+        fallback_language = self.detect_language(latest_user_text)
+        user_prompt = (
+            "Conversation history:\n"
+            f"{json.dumps(conversation_history, ensure_ascii=False)}\n"
+            f"Latest user input: {latest_user_text}"
+        )
         try:
-            content = await asyncio.to_thread(
-                self._chat_json_sync,
-                TRIAGE_SYSTEM_PROMPT,
-                "\n".join(prompt_parts),
-                140,
-            )
+            content = await asyncio.to_thread(self._chat_json_sync, user_prompt)
             llm_output = TriageLLMOutput.model_validate_json(content)
-            intent = _normalize_intent(llm_output.intent)
-            urgency = self._estimate_urgency(transcript, intent, acoustic, cultural_ctx)
-            distress_level = int(acoustic.get("distress_level", 1))
-
-            return ReasoningOutput(
-                restatement=llm_output.restatement.strip(),
-                location=llm_output.location.strip() if llm_output.location else None,
-                intent=intent,
-                urgency_level=urgency,
-                sentiment=self._derive_sentiment(transcript, distress_level),
-                needs_verification=True,
-                language_code=language_code,
+            detected_language, intent, location, is_complete, response_text = self._normalize_llm_output(
+                llm_output,
+                fallback_language=fallback_language,
+                fallback_intent=intent_hint,
+                fallback_location=location_hint,
             )
         except Exception as exc:
             print(f"[ReasoningService] Groq triage error: {exc}")
-            return None
+            return self.fallback_analyze(conversation_history, acoustic_context)
+
+        urgency = self._estimate_urgency(latest_user_text, intent, acoustic_context)
+        sentiment = self._derive_sentiment(
+            latest_user_text,
+            int((acoustic_context or {}).get("distress_level", 1)),
+        )
+        return ReasoningOutput(
+            detected_language=detected_language,
+            intent=intent,
+            location=location,
+            is_complete=is_complete,
+            response_text=response_text,
+            urgency_level=urgency,
+            sentiment=sentiment,
+            language_code=detected_language,
+            needs_verification=is_complete,
+            is_complete_complaint=is_complete,
+            restatement=response_text if is_complete else None,
+            missing_info_question=response_text if not is_complete else None,
+        )
 
     async def check_confirmation(self, transcript: str) -> ConfirmationOutput | None:
         if not transcript or not transcript.strip():
             return None
-
         language_code = self.detect_language(transcript)
         tokens = set(_tokenize(transcript))
-        yes_tokens = set().union(*YES_WORDS.values())
-        no_tokens = set().union(*NO_WORDS.values())
+        yes_tokens = YES_WORDS.get(language_code, set()).union(*YES_WORDS.values())
+        no_tokens = NO_WORDS.get(language_code, set()).union(*NO_WORDS.values())
 
         confirmed = bool(tokens & yes_tokens)
         is_denial = bool(tokens & no_tokens)
@@ -427,20 +588,14 @@ class ReasoningService:
         self,
         location: str | None,
         language_code: str,
-        intent: str,
+        intent: str | None,
     ) -> str:
-        prompt = f"lang={language_code}\nintent={intent}\nlocation={location or 'unknown'}"
-        try:
-            assurance = await asyncio.to_thread(
-                self._chat_text_sync,
-                ASSURANCE_SYSTEM_PROMPT,
-                prompt,
-                40,
-            )
-            return assurance.strip() or _fallback_assurance(location)
-        except Exception as exc:
-            print(f"[ReasoningService] Groq assurance error: {exc}")
-            return _fallback_assurance(location)
+        del intent
+        language_code = _normalize_language(language_code)
+        return _build_assurance_text(language_code, location)
+
+    def build_confirmation_text(self, language_code: str, intent: str | None, location: str) -> str:
+        return _build_confirmation_text(language_code, intent, location)
 
 
 reasoning_service = ReasoningService()
