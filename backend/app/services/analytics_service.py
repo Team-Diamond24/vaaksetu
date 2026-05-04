@@ -1,67 +1,80 @@
 """
-Post-call analytics service — generates coach-style performance reports.
+Post-call analytics service powered by Groq.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+
+from groq import Groq
 from pydantic import BaseModel, Field
-from openai import AsyncOpenAI
 
 from app.config import settings
 
 
+POST_MORTEM_MODEL = "llama-3.1-8b-instant"
+POST_MORTEM_PROMPT = (
+    "1092 QA. Score understanding(1-10), cultural_accuracy(1-10), "
+    "name the main bottleneck, give one coaching sentence. Output JSON only."
+)
+
+
 class PerformanceReport(BaseModel):
-    """Structured post-mortem report shown to the supervisor."""
+    understanding_score: int = Field(ge=1, le=10)
+    cultural_accuracy: int = Field(ge=1, le=10)
+    bottleneck_detected: str
+    coaching_tip: str
 
-    understanding_score: int = Field(
-        ge=1,
-        le=10,
-        description="How well the AI/operator understood and resolved the issue.",
+
+def _normalize_report_payload(payload: dict) -> dict:
+    understanding = payload.get("understanding_score", payload.get("score", 3))
+    cultural = payload.get("cultural_accuracy", payload.get("culture_score", 3))
+    bottleneck = payload.get(
+        "bottleneck_detected",
+        payload.get("bottleneck", payload.get("issue", "Unknown bottleneck")),
     )
-    cultural_accuracy: int = Field(
-        ge=1,
-        le=10,
-        description="How accurately regional language and dialect were interpreted.",
-    )
-    bottleneck_detected: str = Field(
-        description="Main point where the caller became frustrated or progress stalled."
-    )
-    coaching_tip: str = Field(
-        description="One sentence actionable coaching tip for the human operator."
+    coaching = payload.get(
+        "coaching_tip",
+        payload.get("tip", payload.get("advice", "Escalate sooner when the call stalls.")),
     )
 
-
-POST_MORTEM_PROMPT = """\
-You are the VaakSetu Call Coach.
-
-Given the full transcript timeline of a completed helpline call, output a strict JSON object:
-- understanding_score (1-10)
-- cultural_accuracy (1-10)
-- bottleneck_detected (short phrase)
-- coaching_tip (exactly one sentence)
-
-Scoring guidance:
-- understanding_score: quality of issue comprehension and resolution flow.
-- cultural_accuracy: handling of multilingual / dialect cues with empathy and correctness.
-- bottleneck_detected: where the conversation slowed, repeated, or confusion emerged.
-- coaching_tip: specific operator action that would most improve next call.
-
-Return only valid JSON matching the schema.
-"""
+    return {
+        "understanding_score": max(1, min(10, int(understanding))),
+        "cultural_accuracy": max(1, min(10, int(cultural))),
+        "bottleneck_detected": str(bottleneck),
+        "coaching_tip": str(coaching),
+    }
 
 
 class AnalyticsService:
-    """Generates a post-call performance report via Gemini Flash."""
+    """Generates a post-call report with Groq JSON mode."""
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.openrouter_api_key,
+        self._client = Groq(api_key=settings.groq_api_key)
+
+    def _post_mortem_sync(self, transcript_timeline: str) -> PerformanceReport:
+        response = self._client.chat.completions.create(
+            model=POST_MORTEM_MODEL,
+            messages=[
+                {"role": "system", "content": POST_MORTEM_PROMPT},
+                {"role": "user", "content": transcript_timeline},
+            ],
+            temperature=0.2,
+            max_tokens=220,
+            response_format={"type": "json_object"},
         )
-        self._model = "google/gemini-2.5-flash"
+        content = (response.choices[0].message.content or "").strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        raw_payload = json.loads(content.strip())
+        return PerformanceReport.model_validate(_normalize_report_payload(raw_payload))
 
     async def post_mortem(self, transcript_timeline: str) -> PerformanceReport | None:
-        """Generate final performance report from full call transcript."""
         if not transcript_timeline.strip():
             return PerformanceReport(
                 understanding_score=3,
@@ -71,17 +84,7 @@ class AnalyticsService:
             )
 
         try:
-            response = await self._client.beta.chat.completions.parse(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": POST_MORTEM_PROMPT},
-                    {"role": "user", "content": f"Call transcript timeline:\n\n{transcript_timeline}"},
-                ],
-                response_format=PerformanceReport,
-                temperature=0.2,
-                max_tokens=300,
-            )
-            return response.choices[0].message.parsed
+            return await asyncio.to_thread(self._post_mortem_sync, transcript_timeline)
         except Exception as exc:
             print(f"[AnalyticsService] Post-mortem error: {exc}")
             return None

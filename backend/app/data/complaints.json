@@ -1,0 +1,48 @@
+[
+  {
+    "session_id": "2407c339-6e60-4ade-9437-9441365dfc4e",
+    "timestamp": "2026-05-04T09:23:20.160734+00:00",
+    "location": null,
+    "complaint_text": "I understand you need medical help, is that correct?",
+    "intent": "Medical",
+    "urgency": 4,
+    "distress_level": 2,
+    "language": "en",
+    "acoustic_data": {
+      "environment": "moderate",
+      "loudness": "normal"
+    }
+  },
+  {
+    "id": "a166b902-8384-4048-a4d9-35ab3c025d88",
+    "timestamp": "2026-05-04T09:50:15.844175+00:00",
+    "location": "en",
+    "issue": "Du har en brandkatastrofe.",
+    "urgency": 4,
+    "status": "Pending Dispatch"
+  },
+  {
+    "id": "ffc04364-52a0-4168-a340-8af0e9783722",
+    "timestamp": "2026-05-04T09:54:14.067884+00:00",
+    "location": "house",
+    "issue": "The entire incident is happening at a house.",
+    "urgency": 3,
+    "status": "Pending Dispatch"
+  },
+  {
+    "id": "11107593-e4ea-4419-ac93-7ff76ea35464",
+    "timestamp": "2026-05-04T09:55:07.788342+00:00",
+    "location": "Your house",
+    "issue": "Your house is on fire.",
+    "urgency": 4,
+    "status": "Pending Dispatch"
+  },
+  {
+    "id": "ed014660-d81d-4be1-a468-9c88348f209d",
+    "timestamp": "2026-05-04T09:55:39.941919+00:00",
+    "location": "en",
+    "issue": "The water supply has been cut off for four days.",
+    "urgency": 3,
+    "status": "Pending Dispatch"
+  }
+]

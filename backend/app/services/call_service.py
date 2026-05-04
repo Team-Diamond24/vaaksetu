@@ -1,65 +1,87 @@
 """
-Call session service — state machine for managing call lifecycle.
-
-States:
-  LISTENING   — AI is actively listening and will do full triage analysis.
-  VERIFYING   — AI has restated the issue; waiting for user confirmation.
-  CONFIRMED   — User confirmed the restatement; dispatching help.
-  ESCALATED   — Call has been escalated to a human operator.
+Call session service for the VaakSetu helpline state machine.
 """
 
 from __future__ import annotations
 
+import json
+import threading
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
-from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.models import CallMetadata
 
 
-# ---------------------------------------------------------------------------
-# Call state enum
-# ---------------------------------------------------------------------------
+COMPLAINTS_FILE = Path(__file__).resolve().parent.parent / "data" / "complaints.json"
+GREETING_TEXT = "Namaskara, 1092 Helpline. What is your emergency?"
+
 
 class CallState(str, Enum):
-    """Finite states a call session can be in."""
-    LISTENING  = "LISTENING"
-    VERIFYING  = "VERIFYING"
-    CONFIRMED  = "CONFIRMED"
-    ESCALATED  = "ESCALATED"
+    GREETING = "GREETING"
+    LISTENING = "LISTENING"
+    VERIFYING = "VERIFYING"
+    ASSURANCE = "ASSURANCE"
+    ESCALATED = "ESCALATED"
 
-
-# ---------------------------------------------------------------------------
-# Per-session state
-# ---------------------------------------------------------------------------
 
 @dataclass
 class SessionState:
-    """Tracks the current state and context for a single call session."""
     session_id: str
-    state: CallState = CallState.LISTENING
+    state: CallState = CallState.GREETING
+    pre_escalation_state: CallState | None = None
     last_language_code: str = "en"
     last_restatement: str = ""
-    last_intent: str = ""
+    last_assurance: str = ""
+    last_location: str | None = None
+    last_intent: str = "Inquiry"
     last_urgency: int = 1
+    last_distress_level: int = 1
+    last_environment: str = "quiet"
+    last_loudness: str = "normal"
     is_muted: bool = False
     fallback_triggered: bool = False
+    complaint_logged: bool = False
 
-
-# ---------------------------------------------------------------------------
-# Service
-# ---------------------------------------------------------------------------
 
 class CallService:
-    """Handles call session lifecycle, state transitions, and metadata."""
+    """Handles call lifecycle, state transitions, cached greeting, and complaint logging."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, SessionState] = {}
+        self._complaints_lock = threading.Lock()
+        self._cached_greeting_audio: str | None = None
+        self.ensure_complaints_file()
 
-    # -- session lifecycle ---------------------------------------------------
+    def ensure_complaints_file(self) -> None:
+        COMPLAINTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if not COMPLAINTS_FILE.exists():
+            COMPLAINTS_FILE.write_text("[]", encoding="utf-8")
+            return
+        try:
+            existing = json.loads(COMPLAINTS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                raise ValueError("complaints.json must contain a JSON array")
+        except Exception:
+            COMPLAINTS_FILE.write_text("[]", encoding="utf-8")
+
+    def read_complaints(self) -> list[dict]:
+        self.ensure_complaints_file()
+        try:
+            data = json.loads(COMPLAINTS_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def set_cached_greeting_audio(self, audio_b64: str | None) -> None:
+        self._cached_greeting_audio = audio_b64
+
+    def get_cached_greeting_audio(self) -> str | None:
+        return self._cached_greeting_audio
 
     def create_session(self, session_id: str | None = None) -> CallMetadata:
-        """Create a new call session with default metadata."""
         sid = session_id or str(uuid.uuid4())
         self._sessions[sid] = SessionState(session_id=sid)
         return CallMetadata(
@@ -68,101 +90,141 @@ class CallService:
             detected_sentiment="neutral",
             requires_confirmation=False,
             is_muted=False,
+            distress_level=1,
+            environment="quiet",
         )
 
     def end_session(self, session_id: str) -> None:
-        """Remove a session's state and free memory."""
         self._sessions.pop(session_id, None)
 
-    # -- state queries -------------------------------------------------------
-
     def get_state(self, session_id: str) -> CallState:
-        """Return the current state for a session (defaults to LISTENING)."""
-        s = self._sessions.get(session_id)
-        return s.state if s else CallState.LISTENING
+        session = self._sessions.get(session_id)
+        return session.state if session else CallState.LISTENING
 
     def get_session(self, session_id: str) -> SessionState | None:
-        """Return the full session state object, or None."""
         return self._sessions.get(session_id)
 
-    # -- state transitions ---------------------------------------------------
+    def transition_to_greeting(self, session_id: str) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session.state = CallState.GREETING
+            print(f"[CallState] {session_id} -> GREETING")
+
+    def transition_to_listening(self, session_id: str) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session.state = CallState.LISTENING
+            session.pre_escalation_state = None
+            session.last_restatement = ""
+            session.last_assurance = ""
+            session.last_location = None
+            session.last_intent = "Inquiry"
+            session.last_urgency = 1
+            session.complaint_logged = False
+            print(f"[CallState] {session_id} -> LISTENING")
 
     def transition_to_verifying(
         self,
         session_id: str,
+        *,
         restatement: str,
         language_code: str,
-        intent: str = "",
-        urgency: int = 1,
+        intent: str,
+        urgency: int,
+        location: str | None,
     ) -> None:
-        """Move to VERIFYING — the AI has restated the issue."""
-        s = self._sessions.get(session_id)
-        if s:
-            s.state = CallState.VERIFYING
-            s.last_restatement = restatement
-            s.last_language_code = language_code
-            s.last_intent = intent
-            s.last_urgency = urgency
-            print(f"[CallState] {session_id} → VERIFYING")
+        session = self._sessions.get(session_id)
+        if session:
+            session.state = CallState.VERIFYING
+            session.last_restatement = restatement
+            session.last_language_code = language_code or session.last_language_code
+            session.last_location = location
+            session.last_intent = intent or session.last_intent
+            session.last_urgency = max(1, min(5, urgency))
+            session.last_assurance = ""
+            session.complaint_logged = False
+            print(f"[CallState] {session_id} -> VERIFYING")
 
-    def transition_to_confirmed(self, session_id: str) -> None:
-        """Move to CONFIRMED — user said Yes / Sari / Haan."""
-        s = self._sessions.get(session_id)
-        if s:
-            s.state = CallState.CONFIRMED
-            print(f"[CallState] {session_id} → CONFIRMED")
-
-    def transition_to_listening(self, session_id: str) -> None:
-        """Move back to LISTENING — user said No / Alla / Nahi or fresh start."""
-        s = self._sessions.get(session_id)
-        if s:
-            s.state = CallState.LISTENING
-            s.last_restatement = ""
-            print(f"[CallState] {session_id} → LISTENING")
+    def transition_to_assurance(self, session_id: str, assurance_text: str) -> bool:
+        session = self._sessions.get(session_id)
+        if not session or session.state != CallState.VERIFYING:
+            return False
+        session.state = CallState.ASSURANCE
+        session.last_assurance = assurance_text
+        print(f"[CallState] {session_id} -> ASSURANCE")
+        return True
 
     def transition_to_escalated(self, session_id: str) -> None:
-        """Move to ESCALATED — call has been escalated to a human."""
-        s = self._sessions.get(session_id)
-        if s:
-            s.state = CallState.ESCALATED
-            print(f"[CallState] {session_id} → ESCALATED")
+        session = self._sessions.get(session_id)
+        if session:
+            if session.state != CallState.ESCALATED:
+                session.pre_escalation_state = session.state
+            session.state = CallState.ESCALATED
+            print(f"[CallState] {session_id} -> ESCALATED")
+
+    def restore_from_escalation(self, session_id: str) -> CallState:
+        session = self._sessions.get(session_id)
+        if not session:
+            return CallState.LISTENING
+        session.state = session.pre_escalation_state or CallState.LISTENING
+        session.pre_escalation_state = None
+        print(f"[CallState] {session_id} -> {session.state.value}")
+        return session.state
+
+    def update_acoustic(
+        self,
+        session_id: str,
+        *,
+        distress_level: int,
+        environment: str,
+        loudness: str,
+    ) -> None:
+        session = self._sessions.get(session_id)
+        if session:
+            session.last_distress_level = max(1, min(5, distress_level))
+            session.last_environment = environment
+            session.last_loudness = loudness
 
     def toggle_mute(self, session_id: str) -> bool:
-        """Flip AI mute state for a session and return the new value."""
-        s = self._sessions.get(session_id)
-        if not s:
+        session = self._sessions.get(session_id)
+        if not session:
             return False
-        s.is_muted = not s.is_muted
-        print(f"[CallState] {session_id} mute={s.is_muted}")
-        return s.is_muted
+        session.is_muted = not session.is_muted
+        print(f"[CallState] {session_id} mute={session.is_muted}")
+        return session.is_muted
 
     def set_muted(self, session_id: str, muted: bool) -> bool:
-        """Set AI mute state for a session and return the resulting value."""
-        s = self._sessions.get(session_id)
-        if not s:
+        session = self._sessions.get(session_id)
+        if not session:
             return False
-        s.is_muted = muted
-        print(f"[CallState] {session_id} mute={s.is_muted}")
-        return s.is_muted
+        session.is_muted = muted
+        print(f"[CallState] {session_id} mute={session.is_muted}")
+        return session.is_muted
 
-    # -- helpers -------------------------------------------------------------
+    def log_complaint(self, session_id: str) -> dict | None:
+        session = self._sessions.get(session_id)
+        if not session or session.complaint_logged or session.state != CallState.ASSURANCE:
+            return None
 
-    @staticmethod
-    def update_sentiment(
-        metadata: CallMetadata, sentiment: str
-    ) -> CallMetadata:
-        """Return a new metadata instance with updated sentiment."""
-        return metadata.model_copy(update={"detected_sentiment": sentiment})
+        complaint = {
+            "id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "location": session.last_location,
+            "issue": session.last_restatement,
+            "urgency": session.last_urgency,
+            "status": "Pending Dispatch",
+        }
 
-    @staticmethod
-    def toggle_speaking(
-        metadata: CallMetadata, is_speaking: bool
-    ) -> CallMetadata:
-        """Return a new metadata instance with updated speaking state."""
-        return metadata.model_copy(update={"is_user_speaking": is_speaking})
+        self.ensure_complaints_file()
+        with self._complaints_lock:
+            complaints = self.read_complaints()
+            complaints.append(complaint)
+            with COMPLAINTS_FILE.open("w", encoding="utf-8") as handle:
+                json.dump(complaints, handle, ensure_ascii=False, indent=2)
+
+        session.complaint_logged = True
+        print(f"[Complaint] Logged complaint for session={session_id}")
+        return complaint
 
 
-# ---------------------------------------------------------------------------
-# Singleton
-# ---------------------------------------------------------------------------
 call_service = CallService()

@@ -59,6 +59,12 @@ class SpeechService:
         code = (language_code or "en").lower().strip()
         return VOICE_MAP.get(code, DEFAULT_VOICE)
 
+    def _resolve_prosody(self, voice: str) -> tuple[str, str]:
+        """Use a faster, more urgent delivery for the helpline voices."""
+        if voice == "en-IN-NeerjaNeural":
+            return "+15%", "+0Hz"
+        return "+10%", "+0Hz"
+
     async def synthesize(
         self, text: str, language_code: str = "en"
     ):
@@ -73,12 +79,14 @@ class SpeechService:
             return
 
         voice = self._resolve_voice(language_code)
+        rate, pitch = self._resolve_prosody(voice)
         print(f"[SpeechService] Synthesizing with voice={voice} lang={language_code}")
 
         communicate = edge_tts.Communicate(
             text=text,
             voice=voice,
-            rate="-5%",       # slightly slower for clarity
+            rate=rate,
+            pitch=pitch,
             volume="+0%",
         )
 
@@ -110,12 +118,14 @@ class SpeechService:
             return None
 
         voice = self._resolve_voice(language_code)
+        rate, pitch = self._resolve_prosody(voice)
 
         try:
             communicate = edge_tts.Communicate(
                 text=text,
                 voice=voice,
-                rate="-5%",
+                rate=rate,
+                pitch=pitch,
                 volume="+0%",
             )
 

@@ -1,9 +1,6 @@
 import { useEffect, useRef } from "react";
-import type { ReasoningOutput, AcousticData, CallState } from "@/types";
+import type { AcousticData, CallState, ReasoningOutput } from "@/types";
 
-/* ------------------------------------------------------------------ */
-/*  Transcript entry                                                    */
-/* ------------------------------------------------------------------ */
 export interface TranscriptEntry {
   id: string;
   sender: "citizen" | "ai";
@@ -11,9 +8,6 @@ export interface TranscriptEntry {
   timestamp: Date;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Vulnerability Alert Banner                                          */
-/* ------------------------------------------------------------------ */
 export function VulnerabilityBanner({
   urgency,
   isHighDistress,
@@ -55,13 +49,12 @@ export function VulnerabilityBanner({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Call State Breadcrumb                                                */
-/* ------------------------------------------------------------------ */
 const STATES: { key: CallState; label: string; emoji: string }[] = [
+  { key: "GREETING", label: "Greeting", emoji: "👋" },
   { key: "LISTENING", label: "Listening", emoji: "🎧" },
   { key: "VERIFYING", label: "Verifying", emoji: "🔍" },
-  { key: "CONFIRMED", label: "Confirmed", emoji: "✅" },
+  { key: "ASSURANCE", label: "Assurance", emoji: "✅" },
+  { key: "ESCALATED", label: "Escalated", emoji: "🚨" },
 ];
 
 export function CallStateBreadcrumb({ current }: { current: CallState }) {
@@ -76,7 +69,6 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
         const isDone = i < currentIdx;
         return (
           <div key={s.key} className="flex items-center flex-1 last:flex-none">
-            {/* Step circle */}
             <div
               className={`
                 flex items-center justify-center h-9 w-9 rounded-full border-2 text-sm font-bold
@@ -104,7 +96,6 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
             >
               {s.label}
             </span>
-            {/* Connector line */}
             {i < STATES.length - 1 && (
               <div
                 className={`
@@ -125,16 +116,13 @@ export function CallStateBreadcrumb({ current }: { current: CallState }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Sentiment Emoji Widget                                              */
-/* ------------------------------------------------------------------ */
 export function SentimentWidget({ value }: { value: string }) {
   const map: Record<string, { emoji: string; label: string; color: string }> = {
-    positive:   { emoji: "😊", label: "Positive",   color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
-    neutral:    { emoji: "😐", label: "Neutral",    color: "text-zinc-400 bg-zinc-500/10 border-zinc-500/20" },
-    negative:   { emoji: "😟", label: "Negative",   color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
-    fearful:    { emoji: "😨", label: "Fearful",    color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
-    angry:      { emoji: "😠", label: "Angry",      color: "text-red-400 bg-red-500/10 border-red-500/20" },
+    positive: { emoji: "😊", label: "Positive", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+    neutral: { emoji: "😐", label: "Neutral", color: "text-zinc-400 bg-zinc-500/10 border-zinc-500/20" },
+    negative: { emoji: "😟", label: "Negative", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+    fearful: { emoji: "😨", label: "Fearful", color: "text-amber-400 bg-amber-500/10 border-amber-500/20" },
+    angry: { emoji: "😠", label: "Angry", color: "text-red-400 bg-red-500/10 border-red-500/20" },
     distressed: { emoji: "😰", label: "Distressed", color: "text-orange-400 bg-orange-500/10 border-orange-500/20" },
   };
   const s = map[value] ?? map.neutral;
@@ -153,9 +141,6 @@ export function SentimentWidget({ value }: { value: string }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Urgency Heatmap Meter                                               */
-/* ------------------------------------------------------------------ */
 export function UrgencyMeter({ level }: { level: number }) {
   const segments = [1, 2, 3, 4, 5];
   const colors = [
@@ -210,9 +195,6 @@ export function UrgencyMeter({ level }: { level: number }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Language & Region Widget                                            */
-/* ------------------------------------------------------------------ */
 const LANG_NAMES: Record<string, string> = {
   en: "English",
   hi: "Hindi",
@@ -254,13 +236,16 @@ export function LanguageRegionWidget({
         </span>
         <span className="text-sm font-medium text-white/70">{intent}</span>
       </div>
+      {reasoning?.location && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-lg">📍</span>
+          <span className="text-sm font-medium text-white/70">{reasoning.location}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Acoustic Monitor Widget                                             */
-/* ------------------------------------------------------------------ */
 export function AcousticWidget({ data }: { data: AcousticData | null }) {
   if (!data) {
     return (
@@ -268,23 +253,23 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
         <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground/60">
           Acoustic Analysis
         </span>
-        <span className="text-xs text-muted-foreground">Waiting for audio…</span>
+        <span className="text-xs text-muted-foreground">Waiting for audio...</span>
       </div>
     );
   }
 
   const envConfig = {
-    quiet:    { emoji: "🏠", label: "Quiet",   color: "text-emerald-400" },
+    quiet: { emoji: "🏠", label: "Quiet", color: "text-emerald-400" },
     moderate: { emoji: "👥", label: "Moderate", color: "text-amber-400" },
-    noisy:    { emoji: "🚗", label: "Noisy",    color: "text-orange-400" },
-    chaotic:  { emoji: "🚨", label: "Chaotic",  color: "text-rose-400" },
+    noisy: { emoji: "🚗", label: "Noisy", color: "text-orange-400" },
+    chaotic: { emoji: "🚨", label: "Chaotic", color: "text-rose-400" },
   };
   const env = envConfig[data.environment] ?? envConfig.quiet;
 
   const loudnessConfig = {
-    whisper:  { label: "Whisper",  bars: 1 },
-    normal:   { label: "Normal",   bars: 2 },
-    loud:     { label: "Loud",     bars: 3 },
+    whisper: { label: "Whisper", bars: 1 },
+    normal: { label: "Normal", bars: 2 },
+    loud: { label: "Loud", bars: 3 },
     shouting: { label: "Shouting", bars: 4 },
   };
   const loud = loudnessConfig[data.loudness] ?? loudnessConfig.normal;
@@ -304,13 +289,12 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
         </span>
         {data.is_high_distress && (
           <span className="text-[10px] font-bold text-rose-400 animate-pulse">
-            ⚠ HIGH DISTRESS
+            HIGH DISTRESS
           </span>
         )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {/* Environment */}
         <div className="flex items-center gap-2">
           <span className={`text-lg ${env.color}`}>{env.emoji}</span>
           <div>
@@ -319,7 +303,6 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
           </div>
         </div>
 
-        {/* Loudness */}
         <div className="flex items-center gap-2">
           <div className="flex items-end gap-0.5 h-4">
             {[1, 2, 3, 4].map((b) => (
@@ -342,14 +325,7 @@ export function AcousticWidget({ data }: { data: AcousticData | null }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Live Transcript Feed                                                */
-/* ------------------------------------------------------------------ */
-export function TranscriptFeed({
-  entries,
-}: {
-  entries: TranscriptEntry[];
-}) {
+export function TranscriptFeed({ entries }: { entries: TranscriptEntry[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -364,7 +340,7 @@ export function TranscriptFeed({
       {entries.length === 0 && (
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-muted-foreground/40 italic">
-            Call transcript will appear here…
+            Call transcript will appear here...
           </p>
         </div>
       )}

@@ -270,15 +270,25 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
           case "metadata":
             setMetadata(msg.data);
             setIsAiMuted(Boolean(msg.data.is_muted));
+            
+            // Track thinking state transitions
             if (wasUserSpeakingRef.current && !msg.data.is_user_speaking) {
               setIsThinking(true);
             }
-            wasUserSpeakingRef.current = msg.data.is_user_speaking;
-            // Barge-in: if user starts speaking, stop AI audio
-            if (msg.data.is_user_speaking) {
+            
+            // Barge-in: ONLY interrupt if:
+            // 1. User just started speaking (transition from false to true)
+            // 2. AI is currently speaking
+            // 3. AI is not muted (human not in control)
+            const userJustStartedSpeaking = msg.data.is_user_speaking && !wasUserSpeakingRef.current;
+            if (userJustStartedSpeaking && isAiSpeaking && !msg.data.is_muted) {
+              console.log("[VoiceClient] Barge-in detected - interrupting AI");
               setIsThinking(false);
               handleInterrupt();
             }
+            
+            wasUserSpeakingRef.current = msg.data.is_user_speaking;
+            
             // Human takeover immediately silences any in-progress AI speech.
             if (msg.data.is_muted) {
               handleInterrupt();
@@ -312,11 +322,11 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
             setIsThinking(false);
             break;
         }
-      } catch {
-        console.warn("[VoiceClient] unparseable WS message");
+      } catch (err) {
+        console.warn("[VoiceClient] unparseable WS message:", err);
       }
     },
-    [appendNextTtsChunk, ensureStreamingTtsPlayback, handleInterrupt, playAudio],
+    [appendNextTtsChunk, ensureStreamingTtsPlayback, handleInterrupt, playAudio, isAiSpeaking],
   );
 
   /* ---- start / stop ---- */
@@ -372,16 +382,23 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
 
     /* 6. WebSocket */
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/call`);
+    const wsUrl = `${proto}//${window.location.host}/ws/call`;
+    console.log("[VoiceClient] Connecting to WebSocket:", wsUrl);
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      console.log("[VoiceClient] WebSocket connected");
       setIsConnected(true);
       send({ type: "start_call", session_id: sid });
     };
     ws.onmessage = onWsMessage;
-    ws.onerror = () => setError("WebSocket error");
-    ws.onclose = () => {
+    ws.onerror = (err) => {
+      console.error("[VoiceClient] WebSocket error:", err);
+      setError("WebSocket connection error");
+    };
+    ws.onclose = (event) => {
+      console.log("[VoiceClient] WebSocket closed:", event.code, event.reason);
       setIsConnected(false);
       wsRef.current = null;
     };
@@ -404,8 +421,12 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
 
   const stopCall = useCallback(() => {
     /* signal backend */
-    if (sessionIdRef.current) {
-      send({ type: "end_call", session_id: sessionIdRef.current });
+    if (sessionIdRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+      try {
+        send({ type: "end_call", session_id: sessionIdRef.current });
+      } catch (err) {
+        console.error("[VoiceClient] Error sending end_call:", err);
+      }
     }
 
     /* tear down worklet */
@@ -424,7 +445,11 @@ export function useVoiceClient(): VoiceClientState & VoiceClientActions {
     audioCtxRef.current = null;
     analyserNode.current = null;
 
-    /* keep WS open until backend returns final summary/close */
+    /* close WebSocket */
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
 
     setIsRecording(false);
     setCallActive(false);

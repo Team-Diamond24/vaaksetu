@@ -26,10 +26,10 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
     elevenlabs_api_key: str = ""
     groq_api_key: str = ""
-    openrouter_api_key: str = ""
+    gemini_api_key: str = ""
 
     # VAD
-    vad_energy_threshold: int = 1000
+    vad_energy_threshold: int = 2500
 
     # Database
     database_url: str = "sqlite:///./vaaksetu.db"

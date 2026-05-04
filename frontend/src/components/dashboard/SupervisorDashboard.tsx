@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, PhoneOff, Radio } from "lucide-react";
+import { ClipboardList, Mic, PhoneOff, Radio, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useVoiceClient } from "@/hooks/use-voice-client";
 import { AudioVisualizer } from "@/components/voice-client/AudioVisualizer";
 import { cn } from "@/lib/utils";
-
+import { ComplaintsTable } from "./ComplaintsTable";
 import {
-  VulnerabilityBanner,
-  CallStateBreadcrumb,
-  SentimentWidget,
-  UrgencyMeter,
-  LanguageRegionWidget,
   AcousticWidget,
+  CallStateBreadcrumb,
+  LanguageRegionWidget,
+  SentimentWidget,
   TranscriptFeed,
   type TranscriptEntry,
+  UrgencyMeter,
+  VulnerabilityBanner,
 } from "./DashboardWidgets";
 
-/* ------------------------------------------------------------------ */
-/*  Supervisor Dashboard                                                */
-/* ------------------------------------------------------------------ */
+type DashboardView = "live" | "records";
+
 export function SupervisorDashboard() {
   const {
     isConnected,
@@ -41,13 +40,12 @@ export function SupervisorDashboard() {
     analyserNode,
   } = useVoiceClient();
 
-  /* ---- Transcript history ---- */
+  const [view, setView] = useState<DashboardView>("live");
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const lastTranscriptRef = useRef("");
   const lastRestatementRef = useRef("");
 
-  /* Append citizen transcript when it changes */
   const prevTranscript = useRef(transcript);
   if (transcript && transcript !== prevTranscript.current) {
     prevTranscript.current = transcript;
@@ -65,12 +63,8 @@ export function SupervisorDashboard() {
     }
   }
 
-  /* Append AI restatement when it changes */
   const prevRestatement = useRef(reasoning?.restatement);
-  if (
-    reasoning?.restatement &&
-    reasoning.restatement !== prevRestatement.current
-  ) {
+  if (reasoning?.restatement && reasoning.restatement !== prevRestatement.current) {
     prevRestatement.current = reasoning.restatement;
     if (reasoning.restatement !== lastRestatementRef.current) {
       lastRestatementRef.current = reasoning.restatement;
@@ -94,11 +88,11 @@ export function SupervisorDashboard() {
       lastRestatementRef.current = "";
     } else {
       setShowSummaryModal(false);
+      setView("live");
       await startCall();
     }
   }, [callActive, startCall, stopCall]);
 
-  /* ---- Derived values ---- */
   const urgency = reasoning?.urgency_level ?? 0;
   const sentiment = reasoning?.sentiment ?? metadata?.detected_sentiment ?? "neutral";
   const langCode = reasoning?.language_code ?? "—";
@@ -111,7 +105,15 @@ export function SupervisorDashboard() {
     }
   }, [callActive, callSummary]);
 
-  const ScoreRing = ({ value, label, ringColor }: { value: number; label: string; ringColor: string }) => {
+  const ScoreRing = ({
+    value,
+    label,
+    ringColor,
+  }: {
+    value: number;
+    label: string;
+    ringColor: string;
+  }) => {
     const pct = Math.min(100, Math.max(0, value * 10));
     return (
       <div className="flex flex-col items-center gap-2">
@@ -132,7 +134,6 @@ export function SupervisorDashboard() {
 
   return (
     <div className="dark min-h-screen bg-background text-foreground">
-      {/* ── Top bar ────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-white/5">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -149,8 +150,32 @@ export function SupervisorDashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Connection status */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+              <Button
+                variant="ghost"
+                className={cn(
+                  "h-9 gap-2 cursor-pointer rounded-lg",
+                  view === "live" && "bg-cyan-500/15 text-cyan-300",
+                )}
+                onClick={() => setView("live")}
+              >
+                <Waves className="h-4 w-4" />
+                Live Call View
+              </Button>
+              <Button
+                variant="ghost"
+                className={cn(
+                  "h-9 gap-2 cursor-pointer rounded-lg",
+                  view === "records" && "bg-cyan-500/15 text-cyan-300",
+                )}
+                onClick={() => setView("records")}
+              >
+                <ClipboardList className="h-4 w-4" />
+                Records Dashboard
+              </Button>
+            </div>
+
             <div className="flex items-center gap-2">
               <span
                 className={cn(
@@ -159,7 +184,7 @@ export function SupervisorDashboard() {
                     ? "bg-emerald-400"
                     : callActive
                       ? "bg-amber-400 animate-pulse"
-                      : "bg-zinc-600"
+                      : "bg-zinc-600",
                 )}
               />
               <span className="text-xs text-muted-foreground">
@@ -173,7 +198,7 @@ export function SupervisorDashboard() {
                         ? isThinking
                           ? "Thinking..."
                           : "Live"
-                        : "Connecting…"}
+                        : "Connecting..."}
               </span>
             </div>
 
@@ -183,7 +208,6 @@ export function SupervisorDashboard() {
               </span>
             )}
 
-            {/* Call toggle */}
             <Button
               id="call-toggle"
               onClick={handleToggleCall}
@@ -191,7 +215,7 @@ export function SupervisorDashboard() {
                 "gap-2 rounded-xl px-5 cursor-pointer",
                 callActive
                   ? "bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30"
-                  : "bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30"
+                  : "bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30",
               )}
               variant="ghost"
             >
@@ -209,108 +233,89 @@ export function SupervisorDashboard() {
         </div>
       </header>
 
-      {/* ── Main grid ──────────────────────────────────────────────── */}
       <main className="max-w-[1600px] mx-auto px-6 py-6 flex flex-col gap-6">
-        {/* Vulnerability banner */}
-        <VulnerabilityBanner urgency={urgency} isHighDistress={isHighDistress} />
+        {view === "live" ? (
+          <>
+            <VulnerabilityBanner urgency={urgency} isHighDistress={isHighDistress} />
 
-        {/* Call state breadcrumb */}
-        {callActive && (
-          <Card className="border-white/10 bg-white/[0.02]">
-            <CardContent className="p-4">
-              <CallStateBreadcrumb current={callState} />
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── 3-column grid ──────────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* ── LEFT COLUMN: Live Call (8 cols) ──────────────────── */}
-          <div className="lg:col-span-8 flex flex-col gap-6">
-            {/* Live call card */}
-            <Card className="flex-1 border-white/10 bg-white/[0.02] overflow-hidden">
-              <CardContent className="p-0 flex flex-col h-[600px]">
-                {/* Card header */}
-                <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={cn(
-                        "h-3 w-3 rounded-full",
-                        callActive ? "bg-rose-500 animate-pulse" : "bg-zinc-600"
-                      )}
-                    />
-                    <span className="text-sm font-semibold">Live Call Feed</span>
-                    {callActive && (
-                      <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded-full">
-                        ● REC
-                      </span>
-                    )}
-                  </div>
-                  {metadata?.session_id && (
-                    <span className="text-[10px] font-mono text-muted-foreground/40">
-                      Session: {metadata.session_id.slice(0, 8)}…
-                    </span>
-                  )}
-                </div>
-
-                {/* Visualizer strip */}
-                <div className="px-6 py-3 border-b border-white/5 bg-white/[0.01]">
-                  <AudioVisualizer
-                    analyser={analyserNode.current}
-                    isActive={isRecording}
-                  />
-                </div>
-
-                {/* Transcript feed */}
-                <div className="flex-1 px-6 py-4 overflow-hidden">
-                  <TranscriptFeed entries={entries} />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* ── RIGHT COLUMN: Widgets (4 cols) ──────────────────── */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* Sentiment */}
-            <SentimentWidget value={sentiment} />
-
-            {/* Urgency meter */}
-            <UrgencyMeter level={urgency} />
-
-            {/* Language & Region */}
-            <LanguageRegionWidget
-              languageCode={langCode}
-              reasoning={reasoning}
-            />
-
-            <Separator className="bg-white/5" />
-
-            {/* Acoustic analysis */}
-            <AcousticWidget data={acousticData} />
-
-            {/* AI Restatement card */}
-            {reasoning?.restatement && (
-              <Card className="border-violet-500/20 bg-violet-500/5">
+            {callActive && (
+              <Card className="border-white/10 bg-white/[0.02]">
                 <CardContent className="p-4">
-                  <p className="text-[10px] uppercase tracking-widest font-bold text-violet-400/60 mb-2">
-                    AI Restatement
-                  </p>
-                  <p className="text-sm text-violet-200 leading-relaxed">
-                    {reasoning.restatement}
-                  </p>
-                  {reasoning.needs_verification && (
-                    <div className="mt-3 flex items-center gap-2 text-amber-400">
-                      <span className="text-xs">⚠</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider">
-                        Needs Verification
-                      </span>
-                    </div>
-                  )}
+                  <CallStateBreadcrumb current={callState} />
                 </CardContent>
               </Card>
             )}
-          </div>
-        </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 flex flex-col gap-6">
+                <Card className="flex-1 border-white/10 bg-white/[0.02] overflow-hidden">
+                  <CardContent className="p-0 flex flex-col h-[600px]">
+                    <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={cn(
+                            "h-3 w-3 rounded-full",
+                            callActive ? "bg-rose-500 animate-pulse" : "bg-zinc-600",
+                          )}
+                        />
+                        <span className="text-sm font-semibold">Live Call Feed</span>
+                        {callActive && (
+                          <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded-full">
+                            ● REC
+                          </span>
+                        )}
+                      </div>
+                      {metadata?.session_id && (
+                        <span className="text-[10px] font-mono text-muted-foreground/40">
+                          Session: {metadata.session_id.slice(0, 8)}...
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="px-6 py-3 border-b border-white/5 bg-white/[0.01]">
+                      <AudioVisualizer analyser={analyserNode.current} isActive={isRecording} />
+                    </div>
+
+                    <div className="flex-1 px-6 py-4 overflow-hidden">
+                      <TranscriptFeed entries={entries} />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="lg:col-span-4 flex flex-col gap-4">
+                <SentimentWidget value={sentiment} />
+                <UrgencyMeter level={urgency} />
+                <LanguageRegionWidget languageCode={langCode} reasoning={reasoning} />
+                <Separator className="bg-white/5" />
+                <AcousticWidget data={acousticData} />
+
+                {reasoning?.restatement && (
+                  <Card className="border-violet-500/20 bg-violet-500/5">
+                    <CardContent className="p-4">
+                      <p className="text-[10px] uppercase tracking-widest font-bold text-violet-400/60 mb-2">
+                        AI Restatement
+                      </p>
+                      <p className="text-sm text-violet-200 leading-relaxed">
+                        {reasoning.restatement}
+                      </p>
+                      {reasoning.needs_verification && (
+                        <div className="mt-3 flex items-center gap-2 text-amber-400">
+                          <span className="text-xs">⚠</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider">
+                            Needs Verification
+                          </span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <ComplaintsTable />
+        )}
       </main>
 
       {shouldShowSummary && callSummary && (
@@ -322,7 +327,11 @@ export function SupervisorDashboard() {
                   <h2 className="text-xl font-bold">Call Summary</h2>
                   <p className="text-xs text-muted-foreground">Post-call performance report</p>
                 </div>
-                <Button variant="ghost" onClick={() => setShowSummaryModal(false)} className="cursor-pointer">
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowSummaryModal(false)}
+                  className="cursor-pointer"
+                >
                   Close
                 </Button>
               </div>
@@ -333,12 +342,16 @@ export function SupervisorDashboard() {
               </div>
 
               <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-amber-300/80 mb-1">Bottleneck Detected</p>
+                <p className="text-[10px] uppercase tracking-widest text-amber-300/80 mb-1">
+                  Bottleneck Detected
+                </p>
                 <p className="text-sm text-amber-100">{callSummary.bottleneck_detected}</p>
               </div>
 
               <div className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-4">
-                <p className="text-[10px] uppercase tracking-widest text-violet-300/80 mb-1">Coaching Tip</p>
+                <p className="text-[10px] uppercase tracking-widest text-violet-300/80 mb-1">
+                  Coaching Tip
+                </p>
                 <p className="text-sm text-violet-100">{callSummary.coaching_tip}</p>
               </div>
             </CardContent>
