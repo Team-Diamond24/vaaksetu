@@ -1,0 +1,52 @@
+VaakSetu v2.0 - Quick Start Guide
+BACKEND SETUP
+
+1. Open a terminal/command prompt.
+2. Navigate to the backend folder:
+   cd backend
+3. Create a Python virtual environment:
+   python -m venv .venv
+4. Activate the virtual environment:
+   - On Windows PowerShell:
+       .\.venv\Scripts\Activate.ps1
+   - On Windows cmd:
+       .\.venv\Scripts\activate.bat
+   - On Linux/macOS:
+       source .venv/bin/activate
+5. Install dependencies:
+   pip install -r requirements.txt
+6. Copy the environment file:
+   - If .env.example exists, copy it to .env
+   - On Windows:
+       copy .env.example .env
+   - On Linux/macOS:
+       cp .env.example .env
+7. Edit the .env file to add your API keys and configuration as needed.
+8. Run the backend server:
+   uvicorn app.main:app --reload
+   - The server will start at http://127.0.0.1:8000
+
+FRONTEND SETUP
+
+1. Open a new terminal/command prompt.
+2. Navigate to the frontend folder:
+   cd frontend
+3. Install Node.js dependencies:
+   npm install
+4. Copy the environment file:
+   - If .env.example exists, copy it to .env
+   - On Windows:
+       copy .env.example .env
+   - On Linux/macOS:
+       cp .env.example .env
+5. Edit the .env file to set the backend API and WebSocket URLs.
+6. Start the frontend development server:
+   npm run dev
+   - The app will be available at the URL shown in the terminal (usually http://localhost:5173)
+
+- Make sure you have Python 3.10+ and Node.js 18+ installed.
+- Required API keys (e.g., GROQ_API_KEY) must be set in the backend .env file.
+- For production, use proper deployment and security practices.
+- For troubleshooting, check the terminal output for errors.
+
+For more details, see the README.md file in the project root.
