@@ -1,63 +1,120 @@
-# VaakSetu - 1092 Helpline Intelligence Layer
+# VaakSetu v2.0 - Mission-Critical 1092 Helpline Intelligence
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-Realtime-009688)
-![React](https://img.shields.io/badge/React-Voice%20UI-61DAFB)
-![WebSocket](https://img.shields.io/badge/WebSocket-Live%20Streaming-orange)
-![SQLite](https://img.shields.io/badge/SQLite-Analytics-003B57)
+![Version](https://img.shields.io/badge/Version-2.0-black)
+![FastAPI](https://img.shields.io/badge/FastAPI-Realtime%20Backend-009688)
+![React](https://img.shields.io/badge/React-Command%20Center-61DAFB)
+![Groq](https://img.shields.io/badge/Groq-STT%20%2B%20Analytics-orange)
+![SQLite](https://img.shields.io/badge/SQLite-Operational%20Memory-003B57)
 
-**Verified Understanding + Cultural Intelligence for emergency response at scale.**  
-VaakSetu is a real-time AI-assisted call workflow for the **1092 helpline**, built to understand citizens correctly across dialects, emotion, and noisy environments before action is taken.
+**Verified Understanding. Cultural Intelligence. Zero Dead-Air Response.**
+
+VaakSetu v2.0 is a live emergency-call intelligence stack for the **1092 Helpline**, designed to reduce response risk caused by language variation, incomplete caller context, and panic-driven speech.
 
 ---
 
 ## Project Vision
 
-Emergency calls fail when systems misunderstand people under stress. Callers switch between Kannada, Hindi, and English, use regional slang, and speak in panic from noisy surroundings. A wrong interpretation can delay help.
+Emergency callers do not speak in ideal conditions. They code-switch, use regional slang, omit details, and often speak under distress in noisy environments. Traditional pipelines lose precision exactly when precision matters most.
 
-VaakSetu addresses this with a mission-first pipeline:
-- real-time speech-to-text from live call audio,
-- dialect-aware contextual reasoning,
-- acoustic distress intelligence,
-- a verified confirmation loop before escalation,
-- and instant human takeover when needed.
+VaakSetu is built to solve this through:
+- multilingual real-time transcription,
+- dialect-aware contextual understanding,
+- acoustic distress sensing,
+- explicit verification loops before dispatch intent,
+- and resilient auto-escalation when AI reliability degrades.
 
-The goal is simple: **understand correctly, verify safely, respond faster.**
+The mission remains operationally simple: **understand correctly first, then act.**
 
 ---
 
-## Core Features (The Winning Edge)
+## v2.0 Architecture Updates
 
-### 1) Dialect-Aware RAG
-- `backend/app/services/cultural_service.py` detects regional slang markers in the *current* transcript and injects only matched definitions.
-- Cultural context is included in reasoning **only when detected**, reducing token waste and preserving precision.
-- The design is compatible with Kannada linguistic enrichment pipelines (including Igo-style dictionary expansions) through the editable corpus in `backend/app/data/cultural_slang.json`.
+## 1) Resilient AI Architecture
 
-### 2) Acoustic Intelligence
-- `backend/app/services/acoustic_service.py` performs chunk-level DSP over live PCM:
-  - RMS loudness,
-  - Zero-Crossing Rate (pitch proxy),
-  - rolling noise floor/environment classification,
-  - distress-level scoring (1-5).
-- Supervisors see distress and environment signals in real time for proactive intervention.
+### API Guardrail System
+- In `backend/app/main.py`, call orchestration enforces explicit timeout rails:
+  - `STT_TIMEOUT_SECONDS = 4.0`
+  - `LLM_TIMEOUT_SECONDS = 12.0`
+  - `ANALYTICS_TIMEOUT_SECONDS = 12.0`
+- The 4-second STT guardrail prevents dead-air in live intake by failing fast into resilience logic if transcription stalls.
 
-### 3) Verified Understanding Loop
-- `backend/app/services/call_service.py` maintains call state machine:
-  - `LISTENING -> VERIFYING -> CONFIRMED/ESCALATED`.
-- In `VERIFYING`, the system performs binary confirmation analysis before progressing.
-- This prevents silent failure from confident but incorrect interpretation.
+### One-Shot Fallback Protection
+- `_activate_resilience_takeover()` triggers a technical-glitch voice response and transitions to human control.
+- A one-shot flag (`fallback_triggered`) prevents repeated fallback spam, ensuring the caller always hears a controlled response once, not loops.
 
-### 4) Seamless Human-in-the-Loop
-- Takeover is built in via `TOGGLE_TAKEOVER` over WebSocket.
-- When muted (`is_muted=true`), AI TTS is suppressed while transcription/monitoring continues.
-- `frontend/src/components/dashboard/SupervisorDashboard.tsx` gives a high-visibility command center with live transcript, distress context, and control state.
+---
 
-### 5) Global Resilience
-- `backend/app/main.py` enforces API guardrails with timeout protection (`4s`) around STT/reasoning calls.
-- On timeout/failure:
-  - system emits fallback voice message,
-  - automatically mutes AI,
-  - and transitions to immediate human control.
+## 2) The Coach Analytics Engine (Post-Call Intelligence)
+
+- `backend/app/services/analytics_service.py` generates a structured post-call `PerformanceReport`:
+  - `understanding_score` (1-10)
+  - `cultural_accuracy` (1-10)
+  - `bottleneck_detected`
+  - `coaching_tip`
+- Current v2.0 implementation uses **Groq** (`llama-3.1-8b-instant`) with JSON-mode normalization for robust parsing.
+- Reports are persisted into `backend/vaaksetu.db` (`transcript_events.analytics_report`) and surfaced to supervisors in the Call Summary modal.
+
+---
+
+## 3) Command Center UI/UX
+
+- Supervisor UX is centered in `frontend/src/components/dashboard/SupervisorDashboard.tsx`.
+- V2.0 includes:
+  - dual views (`Live Call View` and `Records Dashboard`),
+  - real-time call state breadcrumb,
+  - urgency and acoustic widgets,
+  - post-call coaching modal.
+- Distress and urgency are represented as live intensity indicators ("heat" cues) via the vulnerability and acoustic widgets for rapid supervisor triage.
+- Current codebase visual language is **high-contrast monochrome command-center styling** (white/black); neon/dark theme variants can be layered without architecture changes.
+
+---
+
+## 4) Performance Optimizations
+
+- Streaming ingest path is chunked and real-time over WebSocket (`audio_chunk` flow).
+- Background work is parallelized with `asyncio.gather(...)` in hot-path branches to reduce perceived latency.
+- TTS is fragmented/chunk-streamed (`speech_service.synthesize`) so playback can begin before full synthesis completes.
+- Filler-word short-circuiting avoids unnecessary LLM calls for low-information utterances.
+
+---
+
+## Core Intelligence Modules
+
+- **Dialect-Aware RAG**: `backend/app/services/cultural_service.py` injects only detected slang definitions from `app/data/cultural_slang.json`.
+- **Acoustic Intelligence**: `backend/app/services/acoustic_service.py` computes RMS, ZCR, noise floor, distress level, and environment class.
+- **Verification Loop**: `backend/app/services/call_service.py` state machine enforces confirmation flow (`LISTENING`, `WAITING_FOR_LOCATION`, `VERIFYING`, `ASSURANCE`, `ESCALATED`).
+- **Human-in-the-Loop**: `TOGGLE_TAKEOVER` can force/manual control; auto-escalation handles resilience failures.
+
+---
+
+## Updated System Diagram
+
+```mermaid
+flowchart TD
+    A[Citizen Voice] --> B[Frontend Audio Capture]
+    B --> C[WebSocket audio_chunk]
+    C --> D[Groq STT + VAD]
+    C --> E[Acoustic Intelligence]
+    D --> F[Transcript to Supervisor]
+    D --> G[Cultural Context Injection]
+    G --> H[LLM Reasoning]
+    E --> I[Urgency/Distress Signals]
+    H --> J{Verified Understanding?}
+    J -- Yes --> K[State: VERIFYING]
+    K --> L[Citizen Confirmation]
+    L --> M[Assurance + TTS Stream]
+    J -- Missing Data --> N[WAITING_FOR_LOCATION]
+    N --> K
+    D --> O{Guardrail Trigger?}
+    O -- Timeout/Error --> P[One-Shot Auto-Fallback]
+    P --> Q[Auto Takeover -> ESCALATED]
+    M --> A
+    Q --> R[Supervisor Intervention]
+    R --> S[End Call]
+    S --> T[Post-Call Analytics]
+    T --> U[Call Summary + Coaching]
+    U --> V[(SQLite: transcript_events)]
+```
 
 ---
 
@@ -65,67 +122,42 @@ The goal is simple: **understand correctly, verify safely, respond faster.**
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React 19, Vite, TypeScript, Shadcn UI, Lucide, Tailwind, Web Audio API, WebSocket streaming |
-| Backend | FastAPI, Uvicorn, Groq Whisper (STT), Groq LLM reasoning + analytics, Edge-TTS, SQLite, Pydantic |
-
----
-
-## System Architecture
-
-```mermaid
-flowchart TD
-    A[Citizen Voice] --> B[Frontend AudioWorklet]
-    B --> C[WebSocket audio_chunk]
-    C --> D[Groq STT + VAD]
-    D --> E[Acoustic & Cultural Analysis]
-    E --> F[Groq Reasoning]
-    F --> G{Verification Needed?}
-    G -- Yes --> H[AI Restatement/TTS]
-    G -- No --> I[Direct Action/Human Takeover]
-    H --> J[Citizen Response]
-    J --> G
-    I --> K[Supervisor Dashboard]
-    K --> L[Post-Call Analytics]
-    L --> M[SQLite Persistence]
-```
-
-Text flow: **Citizen -> Groq STT -> Cultural + Acoustic Analysis -> Groq Reasoning -> Verification -> Edge-TTS -> Citizen**, with resilience short-circuits and human takeover at any point.
+| Frontend | React 19, Vite, TypeScript, Shadcn UI, Lucide, Tailwind, Web Audio API, WebSocket |
+| Backend | FastAPI, Uvicorn, Groq STT, Groq LLM (reasoning/analytics paths), Edge-TTS, SQLite, Pydantic |
 
 ---
 
 ## Installation & Setup
 
-## 1) Backend Setup (FastAPI)
+## Backend
 
 ```bash
 cd backend
 python -m venv .venv
 ```
 
-Activate virtual environment:
+Activate environment:
 
-- Windows (PowerShell):
+- Windows PowerShell:
 ```bash
 .\.venv\Scripts\Activate.ps1
 ```
-
-- Windows (cmd):
+- Windows cmd:
 ```bash
 .\.venv\Scripts\activate.bat
 ```
-
 - Linux/macOS:
 ```bash
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Create backend environment file:
+Configure environment:
 
 ```bash
 copy .env.example .env
@@ -137,83 +169,52 @@ Run backend:
 uvicorn app.main:app --reload
 ```
 
----
-
-## 2) Frontend Setup (React)
+## Frontend
 
 ```bash
 cd frontend
 npm install
-```
-
-Create frontend environment file:
-
-```bash
 copy .env.example .env
-```
-
-Run frontend:
-
-```bash
 npm run dev
-```
-
-Build:
-
-```bash
-npm run build
 ```
 
 ---
 
-## Environment Variables
+## Environment Variables (Current)
 
 Backend (`backend/.env`):
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `APP_ENV` | No | Runtime mode (`development`, `production`) |
-| `APP_DEBUG` | No | Debug behavior |
-| `APP_HOST` | No | Backend host binding |
-| `APP_PORT` | No | Backend port |
-| `GROQ_API_KEY` | Yes | Groq Whisper transcription |
-| `OPENAI_API_KEY` | Optional | Reserved/compat use |
-| `DEEPGRAM_API_KEY` | Optional | Reserved/compat use |
-| `ELEVENLABS_API_KEY` | Optional | Reserved/compat use |
-| `VAD_ENERGY_THRESHOLD` | No | Voice activity threshold tuning |
-| `DATABASE_URL` | No | SQLite URL (default `sqlite:///./vaaksetu.db`) |
+| `APP_ENV` | No | Runtime mode |
+| `APP_DEBUG` | No | Debug mode |
+| `APP_HOST` | No | Host binding |
+| `APP_PORT` | No | Port binding |
+| `GROQ_API_KEY` | Yes | STT + LLM analytics/reasoning calls |
+| `OPENAI_API_KEY` | Optional | Reserved compatibility |
+| `DEEPGRAM_API_KEY` | Optional | Reserved compatibility |
+| `ELEVENLABS_API_KEY` | Optional | Reserved compatibility |
+| `VAD_ENERGY_THRESHOLD` | No | Voice activity gate sensitivity |
+| `DATABASE_URL` | No | SQLite URL (`sqlite:///./vaaksetu.db`) |
 | `CORS_ORIGINS` | No | Allowed frontend origins |
-| `WS_HEARTBEAT_INTERVAL` | No | WS keepalive interval |
+| `WS_HEARTBEAT_INTERVAL` | No | WS heartbeat interval |
 
 Frontend (`frontend/.env`):
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `VITE_API_BASE_URL` | Yes | REST base URL |
-| `VITE_WS_BASE_URL` | Yes | WebSocket base URL |
-
----
-
-## Post-Call Analytics (The Coach)
-
-- `backend/app/services/analytics_service.py` generates a final performance report at call end:
-  - `understanding_score` (1-10),
-  - `cultural_accuracy` (1-10),
-  - `bottleneck_detected`,
-  - `coaching_tip`.
-- Reports are emitted to the supervisor UI and persisted into SQLite (`transcript_events.analytics_report`).
-- `SupervisorDashboard` surfaces this in a **Call Summary** modal for operator coaching and QA.
+| `VITE_API_BASE_URL` | Yes | Backend HTTP base URL |
+| `VITE_WS_BASE_URL` | Yes | Backend WebSocket URL |
 
 ---
 
 ## Impact
 
-VaakSetu is architected as a reusable emergency intelligence layer, not a single-use prototype.  
-With policy and integration adaptations, this model can scale across **112 / 108** and related public safety channels:
+VaakSetu v2.0 is designed as a reusable public-safety intelligence layer for multilingual emergency handling. With policy and integration adaptation, this architecture scales cleanly to **112 / 108** operations:
 
-- better first-understanding under language diversity,
-- faster escalation in high-distress conditions,
-- safer automation through verified confirmation loops,
-- and measurable post-call quality improvement.
+- improved first-pass understanding under linguistic diversity,
+- lower false dispatch intent via verification loops,
+- faster human takeover under AI uncertainty,
+- stronger after-action quality through coaching analytics.
 
-**When emergency systems understand correctly on the first attempt, lives are saved.**
+**In emergency response, correct understanding is intervention.**
