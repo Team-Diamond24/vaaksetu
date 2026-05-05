@@ -23,3 +23,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+
+backend/vaaksetu.db
+backend/app/data/complaints.json

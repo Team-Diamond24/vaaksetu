@@ -191,5 +191,20 @@
       "loudness": "normal"
     },
     "status": "Pending Dispatch"
+  },
+  {
+    "session_id": "72cd8473-cc7b-449e-a647-e66349150595",
+    "timestamp": "2026-05-05T08:29:39.407311+00:00",
+    "location": "B1144",
+    "complaint_text": "Help is on the way. We have registered your fire emergency at B1144. Please stay safe and our team will reach you soon.",
+    "intent": "Fire",
+    "urgency": 4,
+    "distress_level": 1,
+    "language": "en",
+    "acoustic_data": {
+      "environment": "quiet",
+      "loudness": "normal"
+    },
+    "status": "Pending Dispatch"
   }
 ]
