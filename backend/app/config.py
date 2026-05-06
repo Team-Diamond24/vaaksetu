@@ -1,19 +1,18 @@
 """
 Application configuration loaded from environment variables.
-Uses pydantic-settings for type-safe env parsing.
+Refactored to use pydantic v1 `BaseSettings` to support PaaS without Rust.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseSettings
 
 
 class Settings(BaseSettings):
     """Central configuration — all values sourced from .env"""
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
 
     # Application
     app_env: str = "development"
