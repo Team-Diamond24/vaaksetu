@@ -3,7 +3,7 @@ Application configuration loaded from environment variables.
 Refactored to use pydantic v1 `BaseSettings` to support PaaS without Rust.
 """
 
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
